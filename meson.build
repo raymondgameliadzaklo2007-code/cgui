@@ -1,0 +1,95 @@
+project(
+  'cgui',
+  'c',
+  version: '0.1.0',
+  meson_version: '>=1.3.0',
+  default_options: [
+    'warning_level=2',
+    'werror=false',
+    'buildtype=debug',
+  ],
+)
+
+cc = meson.get_compiler('c')
+
+sdl3_dep       = dependency('sdl3', required: true, fallback: ['sdl3', 'sdl3_dep'])
+vulkan_dep     = dependency('vulkan', required: true)
+m_dep          = cc.find_library('m', required: true)
+fontconfig_dep = dependency('fontconfig', required: false)
+freetype_dep   = dependency('freetype2', required: true)
+harfbuzz_dep   = dependency('harfbuzz', required: true)
+librsvg_dep    = dependency('librsvg-2.0', required: true)
+
+# Tree-sitter via Meson wraps (subprojects/*.wrap) — not vendored in third_party/
+tree_sitter_dep   = dependency('tree-sitter', required: true,
+                               fallback: ['tree-sitter', 'tree_sitter_dep'])
+tree_sitter_c_dep = dependency('tree-sitter-c', required: true,
+                               fallback: ['tree-sitter-c', 'tree_sitter_c_dep'])
+
+glslang = find_program('glslangValidator', 'glslang', required: true)
+
+# Meson does not expose c23 as a built-in standard option yet.
+if not cc.has_argument('-std=c23')
+  error('A C compiler with C23 support is required')
+endif
+add_project_arguments('-std=c23', language: 'c')
+
+shaders = [
+  ['rounded_rect.vert', 'vert'],
+  ['rounded_rect.frag', 'frag'],
+  ['blur.vert', 'vert'],
+  ['blur.frag', 'frag'],
+  ['blit.vert', 'vert'],
+  ['blit.frag', 'frag'],
+  ['text.vert', 'vert'],
+  ['text.frag', 'frag'],
+  ['icon.vert', 'vert'],
+  ['icon.frag', 'frag'],
+]
+
+spv_targets = []
+foreach s : shaders
+  name = s[0]
+  stage = s[1]
+  spv_targets += custom_target(
+    name.underscorify() + '_spv',
+    input:  'src/shaders' / name,
+    output: name + '.spv',
+    command: [glslang, '-V', '-S', stage, '@INPUT@', '-o', '@OUTPUT@'],
+  )
+endforeach
+
+sources = files(
+  'src/main.c',
+  'src/gui.c',
+  'src/style.c',
+  'src/panel.c',
+  'src/button.c',
+  'src/vk_context.c',
+  'src/vk_draw.c',
+  'src/spv_loader.c',
+  'src/font.c',
+  'src/fonts.c',
+  'src/editor.c',
+  'src/highlight.c',
+  'src/icon.c',
+)
+
+executable(
+  'cgui',
+  sources,
+  spv_targets,
+  include_directories: include_directories('src'),
+  dependencies: [
+    sdl3_dep,
+    vulkan_dep,
+    m_dep,
+    fontconfig_dep,
+    freetype_dep,
+    harfbuzz_dep,
+    librsvg_dep,
+    tree_sitter_dep,
+    tree_sitter_c_dep,
+  ],
+  install: false,
+)

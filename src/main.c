@@ -799,7 +799,7 @@ static void draw_status_bar(App *app, VkContext *ctx)
     vk_draw_rounded_rect(&app->draw, 0, y, w, 1.0f, 0.0f, 1.0f, edge);
 
     Editor *ed = app_ed(app);
-    char left[256];
+    char left[sizeof(((Editor *)0)->path) + 8];
     char right[128];
     if (ed) {
         const char *path = ed->path[0] ? ed->path : "Untitled";

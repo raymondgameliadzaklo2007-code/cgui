@@ -4,8 +4,9 @@
    shared by the whole draw call lives in push constants. */
 layout(push_constant) uniform Push {
     vec4 color;     /* RGBA of the whole string */
+    vec4 tune;      /* x = weight, y = contrast, z = sRGB target, w = ppem (fragment stage) */
+    vec4 bg;        /* rgb = background colour, w = 1 when known (fragment stage) */
     vec2 screen;    /* w, h in device pixels */
-    vec2 tune;      /* x = weight, y = contrast (fragment stage) */
 } pc;
 
 layout(location = 0) in vec4 i_rect;   /* x, y, w, h in *device* pixels (integer-snapped) */

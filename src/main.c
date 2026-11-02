@@ -837,6 +837,18 @@ static float display_scale(SDL_Window *win)
     return scale;
 }
 
+static bool swapchain_is_srgb(VkFormat fmt)
+{
+    switch (fmt) {
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool reload_font(App *app, const char *path)
 {
     if (!path) return false;
@@ -848,6 +860,14 @@ static bool reload_font(App *app, const char *path)
         fprintf(stderr, "Failed to load font: %s\n", path);
         return false;
     }
+    font_set_target_srgb(&fresh, swapchain_is_srgb(app->vk.swapchain_format));
+    const uint8_t text_bg[3] = {
+        (uint8_t)(app->vk.clear_color[0] * 255.0f + 0.5f),
+        (uint8_t)(app->vk.clear_color[1] * 255.0f + 0.5f),
+        (uint8_t)(app->vk.clear_color[2] * 255.0f + 0.5f),
+    };
+    font_set_background(&fresh, text_bg);
+
     font_destroy(&app->font);
     app->font = fresh;
     for (int i = 0; i < app->tab_count; ++i) {

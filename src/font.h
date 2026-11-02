@@ -2,13 +2,16 @@
  * font.h – High-quality text (FreeType + HarfBuzz)
  *
  * Practical Core Text *approximation* for an editor:
- * - FreeType light hinting (vertical-only snapping) at DPI-scaled integer sizes
+ * - Small sizes: FreeType light hinting (vertical-only snapping) at integer ppem
+ * - Large sizes: unhinted outlines at the exact fractional size (no hint distortion)
+ * - Size-adaptive gamma/contrast: extra punch when small, physically plain when large
  * - HarfBuzz shaping (kerning / advances), ligatures off by default (see font.c)
  * - Every quad lands on whole device pixels, 1 atlas texel == 1 device pixel
  * - Quarter-pixel positioned glyphs for proportional fonts
  * - Batched: one instanced draw per font_draw() call (no per-glyph draws)
  * - FreeType stem darkening on by default (-DFONT_STEM_DARKENING=0 to disable)
- * - Luminance-aware gamma coverage in the fragment shader, tunable at runtime
+ * - Luminance-aware gamma coverage in the fragment shader, tunable at runtime,
+ *   with a separate mode for *_SRGB swapchains
  *
  * Coordinate contract (unchanged for callers):
  *   - x / baseline_y passed to font_draw(), and everything font_measure()
@@ -82,6 +85,8 @@ typedef struct Font {
     void *hb_font;
 
     bool mono;           /* fixed-width: integer device-pixel advances */
+    float ppem;          /* actual raster size in device pixels */
+    int load_flags;      /* FreeType flags used for atlas + shaping (light hinting, or none when large) */
 
     /* Quarter-pixel horizontal variants of ASCII (1/4, 2/4, 3/4 px) used for
        proportional fonts only; fixed-width fonts stay on the integer grid. */
@@ -90,6 +95,10 @@ typedef struct Font {
     /* Runtime tuning, see font_set_tuning(). */
     float weight;        /* 1 = default, >1 bolder, <1 lighter */
     float contrast;      /* 0..1 edge steepening */
+    float bg[4];         /* background rgb (0..1) + known flag, see font_set_background() */
+    bool  target_srgb;   /* swapchain is *_SRGB (linear blending), see font_set_target_srgb() */
+
+    void *hb_buf;        /* reusable HarfBuzz buffer (scratch; not thread-safe) */
 
     char *path;
     VkContext *ctx;
@@ -104,10 +113,32 @@ bool font_create(Font *out, VkContext *ctx,
 void font_destroy(Font *f);
 
 /* Adjust rendering weight/contrast at runtime (no re-bake, takes effect on the
-   next draw). Defaults: weight 1.0, contrast 0.25. Values are clamped. */
+   next draw). Defaults: weight 1.0 (0.82 for CFF/OpenType fonts when stem
+   darkening is on), contrast 0.25. Values are clamped.
+   Wiring a "text weight" setting into the editor is just:
+       font_set_tuning(&font, setting_weight, 0.25f);   // e.g. 0.8 .. 1.3
+   For quick experiments set FONT_WEIGHT / FONT_CONTRAST / FONT_SRGB (=1) in the
+   environment before font_create(). */
 void  font_set_tuning(Font *f, float weight, float contrast);
 
+/* Tell the font whether the swapchain format is an *_SRGB one. The hardware then
+   blends in linear space, so the shader decodes the text colour and uses
+   near-linear coverage instead of the gamma-space compensation. Default: false
+   (UNORM swapchain). Call once after font_create(). */
+void  font_set_target_srgb(Font *f, bool srgb);
+
+/* Optional but recommended: the editor's background colour behind the text.
+   With it the shader blends in linear light exactly (right for every text colour
+   on that background, e.g. grey comments or blue keywords); without it a
+   luminance-only heuristic that assumes a contrasting background is used.
+   Pass NULL to go back to the heuristic. Call again when the theme changes. */
+void  font_set_background(Font *f, const uint8_t rgb[3]);
+
 float font_measure(const Font *f, const char *text);
+
+/* Width of the first n bytes of text (stops early at NUL). Use for cursor /
+   selection x positions. n must fall on a UTF-8 boundary. */
+float font_measure_n(const Font *f, const char *text, size_t n);
 void  font_draw(Font *f, VkContext *ctx,
                 float x, float baseline_y,
                 const char *text, const uint8_t rgba[4]);

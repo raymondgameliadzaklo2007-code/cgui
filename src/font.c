@@ -27,6 +27,7 @@
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 #include FT_OUTLINE_H
+#include FT_FONT_FORMATS_H
 
 #include <hb.h>
 #include <hb-ft.h>
@@ -45,9 +46,19 @@
 #define FONT_STEM_DARKENING 1
 #endif
 
-#define ATLAS_SIZE          2048
+/* At or above this raster size glyphs are rendered unhinted at the exact
+   fractional size: hinting only helps when stems are a few pixels wide, and at
+   large sizes it distorts shapes. Override with -DFONT_HINT_MAX_PPEM=<px>. */
+#ifndef FONT_HINT_MAX_PPEM
+#define FONT_HINT_MAX_PPEM  40.0f
+#endif
+
+#define ATLAS_MIN           1024
+#define ATLAS_MAX           4096   /* guaranteed by every Vulkan implementation */
 #define ATLAS_PAD           2      /* gap between glyphs in the atlas */
+#ifndef MAX_EXTRA_GLYPHS
 #define MAX_EXTRA_GLYPHS    3000   /* non-ASCII glyphs baked at startup */
+#endif
 #define MIN_PIXEL_SIZE      4
 
 #if FONT_LIGATURES
@@ -63,11 +74,12 @@ static const hb_feature_t k_features[] = {
 #define SHAPE_N_FEATURES 3
 #endif
 
-/* Per-draw constants (32 bytes). */
+/* Per-draw constants (56 bytes). Layout must match text.vert / text.frag. */
 typedef struct TextPush {
     float color[4];
+    float tune[4];      /* weight, contrast, srgb target, raster ppem */
+    float bg[4];        /* background rgb + known flag */
     float screen[2];
-    float tune[2];      /* weight, contrast */
 } TextPush;
 
 /* Per-glyph instance data (32 bytes), read as two vec4 vertex attributes. */
@@ -81,6 +93,9 @@ typedef struct GlyphInstance {
    screen is ~10k, so this is far beyond any reasonable frames-in-flight. */
 #define RING_BYTES  (8u * 1024u * 1024u)
 #define BATCH_MAX   2048    /* glyphs reserved/flushed per sub-batch */
+
+/* defined below; used by font_create for env overrides */
+void font_set_tuning(Font *f, float weight, float contrast);
 
 #define VK_TRY(expr)                                                     \
     do {                                                                 \
@@ -137,7 +152,7 @@ enum { PACK_OK = 0, PACK_SKIP = 1, PACK_FULL = -1 };
 static int pack_glyph(Font *f, FT_Face face, FT_UInt gindex, int shift26,
                       Packer *pk, FontGlyph *fg)
 {
-    if (FT_Load_Glyph(face, gindex, FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP) != 0)
+    if (FT_Load_Glyph(face, gindex, (FT_Int32)f->load_flags) != 0)
         return PACK_SKIP;
     FT_GlyphSlot g = face->glyph;
     /* Sub-pixel variant: shift the hinted outline horizontally before rasterizing. */
@@ -194,7 +209,15 @@ static int pack_glyph(Font *f, FT_Face face, FT_UInt gindex, int shift26,
 
 static bool bake_atlas(Font *f, FT_Face face)
 {
-    f->atlas_w = f->atlas_h = ATLAS_SIZE;
+    /* Size the atlas to the font: ASCII (x4 quarter-pixel variants if it might be
+       proportional and small) with margin, plus room for a share of the extras. */
+    const bool large = f->ppem >= FONT_HINT_MAX_PPEM;
+    const double glyph_area = (double)f->ppem * (double)f->ppem * 0.6 + 16.0;
+    const double need = glyph_area * 95.0 * (large ? 1.0 : 4.0) * 1.4
+                      + glyph_area * (double)MAX_EXTRA_GLYPHS * 0.5;
+    int side = ATLAS_MIN;
+    while ((double)side * (double)side < need && side < ATLAS_MAX) side *= 2;
+    f->atlas_w = f->atlas_h = side;
     f->atlas_pixels = calloc((size_t)f->atlas_w * (size_t)f->atlas_h, 1);
     f->by_index_count = (unsigned int)face->num_glyphs;
     f->by_index = calloc(f->by_index_count ? f->by_index_count : 1, sizeof(FontGlyph));
@@ -223,7 +246,7 @@ static bool bake_atlas(Font *f, FT_Face face)
 
     /* Proportional fonts: quarter-pixel variants of ASCII for accurate spacing
        without blurring (each variant is still rasterized once, crisply). */
-    if (!f->mono) {
+    if (!f->mono && !large) {
         for (int q = 1; q < 4 && !full; ++q) {
             for (int c = 32; c < 128 && !full; ++c) {
                 if (!f->glyphs[c].present) continue;
@@ -243,8 +266,14 @@ static bool bake_atlas(Font *f, FT_Face face)
         if (r == PACK_FULL) full = true;
         else if (r == PACK_OK) ++extra;
     }
-    if (full)
-        fprintf(stderr, "font: atlas full, some glyphs not baked\n");
+    /* "full" while baking the optional extras is normal for big sizes; only
+       complain if the ASCII set itself didn't fit. */
+    for (int c = 32; c < 127; ++c) {
+        if (!f->glyphs[c].present && FT_Get_Char_Index(face, (FT_ULong)c)) {
+            fprintf(stderr, "font: atlas too small, ASCII glyphs missing (size %d)\n", f->atlas_w);
+            break;
+        }
+    }
     return true;
 }
 
@@ -578,13 +607,11 @@ bool font_create(Font *out, VkContext *ctx,
         goto fail;
     }
     out->ft_library = library;
-    out->weight = 1.0f;
-    out->contrast = 0.25f;
 #if FONT_STEM_DARKENING
     {
         FT_Bool on = 0;   /* "no-stem-darkening" = false -> darkening enabled */
         FT_Property_Set(library, "cff", "no-stem-darkening", &on);
-        FT_Property_Set(library, "autofit", "no-stem-darkening", &on);
+        FT_Property_Set(library, "autofitter", "no-stem-darkening", &on);
         FT_Property_Set(library, "type1", "no-stem-darkening", &on);
         FT_Property_Set(library, "t1cid", "no-stem-darkening", &on);
     }
@@ -595,14 +622,51 @@ bool font_create(Font *out, VkContext *ctx,
     }
     out->ft_face = face;
 
+    /* Default tuning. FreeType's stem darkening thickens CFF/OpenType outlines
+       noticeably more than TrueType ones (measured ~+25% vs ~+17% ink at small
+       sizes), so those start a little lighter to land at the same visual weight. */
+    out->weight = 1.0f;
+    out->contrast = 0.25f;
+#if FONT_STEM_DARKENING
+    {
+        const char *fmt = FT_Get_Font_Format(face);
+        if (fmt && (strcmp(fmt, "CFF") == 0 || strcmp(fmt, "Type 1") == 0 ||
+                    strcmp(fmt, "CID Type 1") == 0))
+            out->weight = 0.82f;
+    }
+#endif
+    /* Quick experiments without touching the editor:
+         FONT_WEIGHT=1.1 FONT_CONTRAST=0.3 FONT_SRGB=1 ./editor */
+    {
+        const char *e;
+        float wv = out->weight, cv = out->contrast;
+        if ((e = getenv("FONT_WEIGHT")))   wv = (float)atof(e);
+        if ((e = getenv("FONT_CONTRAST"))) cv = (float)atof(e);
+        font_set_tuning(out, wv, cv);
+        if ((e = getenv("FONT_SRGB")))     out->target_srgb = atoi(e) != 0;
+    }
+
     /* Rasterize at integer physical pixels (logical size x DPI). Integer ppem
        keeps the hinter's vertical snapping (x-height, baseline, caps) exact. */
     float physical = pixel_height * dpi_scale;
     int px = (int)(physical + 0.5f);
     if (px < MIN_PIXEL_SIZE) px = MIN_PIXEL_SIZE;
-    if (FT_Set_Pixel_Sizes(face, 0, (FT_UInt)px) != 0) {
-        fprintf(stderr, "font: FT_Set_Pixel_Sizes failed\n");
-        goto fail;
+    if ((float)px >= FONT_HINT_MAX_PPEM) {
+        /* Large: exact fractional size, no hinting (72 dpi => 1 pt == 1 px). */
+        out->ppem = physical;
+        out->load_flags = FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP;
+        if (FT_Set_Char_Size(face, 0, (FT_F26Dot6)(physical * 64.0f + 0.5f), 72, 72) != 0) {
+            fprintf(stderr, "font: FT_Set_Char_Size failed\n");
+            goto fail;
+        }
+    } else {
+        /* Small: integer ppem keeps the light hinter's vertical snapping exact. */
+        out->ppem = (float)px;
+        out->load_flags = FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP;
+        if (FT_Set_Pixel_Sizes(face, 0, (FT_UInt)px) != 0) {
+            fprintf(stderr, "font: FT_Set_Pixel_Sizes failed\n");
+            goto fail;
+        }
     }
 
     /* Metrics in *logical* units so layout matches UI coordinates. FreeType
@@ -628,8 +692,12 @@ bool font_create(Font *out, VkContext *ctx,
        advances agree with the rasterized glyphs. */
     out->hb_font = hb_ft_font_create(face, NULL);
     if (out->hb_font)
-        hb_ft_font_set_load_flags((hb_font_t *)out->hb_font,
-                                  FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP);
+        hb_ft_font_set_load_flags((hb_font_t *)out->hb_font, out->load_flags);
+    out->hb_buf = hb_buffer_create();
+    if (!out->hb_buf && out->hb_font) {          /* no scratch buffer -> no HB path */
+        hb_font_destroy((hb_font_t *)out->hb_font);
+        out->hb_font = NULL;
+    }
 
     if (!gpu_upload_atlas(out)) goto fail;
     if (!gpu_create_ring(out)) goto fail;
@@ -651,6 +719,7 @@ fail:
 void font_destroy(Font *f)
 {
     if (!f) return;
+    if (f->hb_buf) hb_buffer_destroy((hb_buffer_t *)f->hb_buf);
     if (f->hb_font) hb_font_destroy((hb_font_t *)f->hb_font);
     if (f->ft_face) FT_Done_Face((FT_Face)f->ft_face);
     if (f->ft_library) FT_Done_FreeType((FT_Library)f->ft_library);
@@ -678,6 +747,21 @@ void font_destroy(Font *f)
     memset(f, 0, sizeof(*f));
 }
 
+void font_set_background(Font *f, const uint8_t rgb[3])
+{
+    if (!f) return;
+    if (!rgb) { memset(f->bg, 0, sizeof(f->bg)); return; }
+    f->bg[0] = rgb[0] / 255.0f;
+    f->bg[1] = rgb[1] / 255.0f;
+    f->bg[2] = rgb[2] / 255.0f;
+    f->bg[3] = 1.0f;
+}
+
+void font_set_target_srgb(Font *f, bool srgb)
+{
+    if (f) f->target_srgb = srgb;
+}
+
 void font_set_tuning(Font *f, float weight, float contrast)
 {
     if (!f) return;
@@ -703,32 +787,43 @@ static inline float adv_device(const Font *f, float adv_dev)
     return f->mono ? roundf(adv_dev) : adv_dev;
 }
 
-static bool is_ascii(const char *s)
+static size_t text_len(const char *s, size_t max)
 {
-    for (; *s; ++s)
-        if ((unsigned char)*s >= 0x80) return false;
+    size_t n = 0;
+    while (n < max && s[n]) ++n;
+    return n;
+}
+
+static bool is_ascii(const char *s, size_t n)
+{
+    for (size_t i = 0; i < n; ++i)
+        if ((unsigned char)s[i] >= 0x80) return false;
     return true;
 }
 
-static hb_buffer_t *shape_text(const Font *f, const char *text)
+/* Shapes into the Font's reusable scratch buffer (owned by Font; do not destroy).
+   One shaped run is alive at a time: measure and draw never nest. */
+static hb_buffer_t *shape_text(const Font *f, const char *text, size_t n)
 {
-    hb_buffer_t *buf = hb_buffer_create();
-    hb_buffer_add_utf8(buf, text, -1, 0, -1);
+    hb_buffer_t *buf = (hb_buffer_t *)f->hb_buf;
+    hb_buffer_clear_contents(buf);
+    hb_buffer_add_utf8(buf, text, (int)n, 0, (int)n);
     hb_buffer_guess_segment_properties(buf);
     hb_shape((hb_font_t *)f->hb_font, buf, SHAPE_FEATURES, SHAPE_N_FEATURES);
     return buf;
 }
 
-float font_measure(const Font *f, const char *text)
+float font_measure_n(const Font *f, const char *text, size_t n)
 {
     if (!f || !text) return 0.f;
+    n = text_len(text, n);
     const float s = f->render_scale;
     float w = 0.f;
 
     /* Fast path: fixed-width + ASCII needs no shaping (no kerning in mono). */
-    if (!f->hb_font || (f->mono && is_ascii(text))) {
-        for (const char *p = text; *p; ++p) {
-            unsigned char c = (unsigned char)*p;
+    if (!f->hb_font || (f->mono && is_ascii(text, n))) {
+        for (size_t i = 0; i < n; ++i) {
+            unsigned char c = (unsigned char)text[i];
             if (c == '\n') continue;
             if (c < 32 || c > 126 || !f->glyphs[c].present)
                 w += adv_device(f, f->space_advance * s);
@@ -738,7 +833,7 @@ float font_measure(const Font *f, const char *text)
         return w / s;
     }
 
-    hb_buffer_t *buf = shape_text(f, text);
+    hb_buffer_t *buf = shape_text(f, text, n);
     unsigned int count = 0;
     hb_glyph_info_t *info = hb_buffer_get_glyph_infos(buf, &count);
     hb_glyph_position_t *pos = hb_buffer_get_glyph_positions(buf, &count);
@@ -746,8 +841,12 @@ float font_measure(const Font *f, const char *text)
         if (text[info[i].cluster] == '\n') continue;
         w += adv_device(f, (float)pos[i].x_advance / 64.0f);
     }
-    hb_buffer_destroy(buf);
     return w / s;
+}
+
+float font_measure(const Font *f, const char *text)
+{
+    return font_measure_n(f, text, (size_t)-1);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -827,8 +926,9 @@ void font_draw(Font *f, VkContext *ctx,
     const float s = f->render_scale;
     TextPush pc = {
         .color  = { rgba[0] / 255.f, rgba[1] / 255.f, rgba[2] / 255.f, rgba[3] / 255.f },
+        .bg     = { f->bg[0], f->bg[1], f->bg[2], f->bg[3] },
         .screen = { (float)ctx->swapchain_extent.width, (float)ctx->swapchain_extent.height },
-        .tune   = { f->weight, f->contrast },
+        .tune   = { f->weight, f->contrast, f->target_srgb ? 1.0f : 0.0f, f->ppem },
     };
     vkCmdPushConstants(cmd, f->layout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -841,11 +941,12 @@ void font_draw(Font *f, VkContext *ctx,
     const float line_dev = roundf(f->line_height * s);
     float pen_x = x_dev;
     float pen_y = roundf(baseline_y * s);      /* baseline always on a pixel row */
+    const size_t len = strlen(text);
 
     /* Fast path: fixed-width + ASCII, straight from the atlas cache. */
-    if (!f->hb_font || (f->mono && is_ascii(text))) {
-        for (const char *p = text; *p; ++p) {
-            unsigned char c = (unsigned char)*p;
+    if (!f->hb_font || (f->mono && is_ascii(text, len))) {
+        for (size_t i = 0; i < len; ++i) {
+            unsigned char c = (unsigned char)text[i];
             if (c == '\n') { pen_x = x_dev; pen_y += line_dev; continue; }
             if (c < 32 || c > 126 || !f->glyphs[c].present) {
                 pen_x += adv_device(f, f->space_advance * s);
@@ -860,7 +961,7 @@ void font_draw(Font *f, VkContext *ctx,
     }
 
     /* General path: HarfBuzz shaping (kerning, proportional fonts, non-ASCII). */
-    hb_buffer_t *buf = shape_text(f, text);
+    hb_buffer_t *buf = shape_text(f, text, len);
     unsigned int count = 0;
     hb_glyph_info_t *info = hb_buffer_get_glyph_infos(buf, &count);
     hb_glyph_position_t *pos = hb_buffer_get_glyph_positions(buf, &count);
@@ -892,6 +993,5 @@ void font_draw(Font *f, VkContext *ctx,
         pen_x += adv_device(f, (float)pos[i].x_advance / 64.0f);
         pen_y -= (float)pos[i].y_advance / 64.0f;   /* HB y-up -> screen y-down */
     }
-    hb_buffer_destroy(buf);
     batch_flush(&batch);
 }

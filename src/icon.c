@@ -385,29 +385,31 @@ void icon_draw(IconRenderer *r, Icon *icon, VkContext *ctx,
     if (!r || !r->ready || !icon || !icon->ready || !ctx || !ctx->frame_open) return;
 
     VkDevice dev = ctx->device;
-    VkDescriptorSet set;
-    VkDescriptorSetAllocateInfo dsai = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = r->pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &r->set_layout,
-    };
-    if (vkAllocateDescriptorSets(dev, &dsai, &set) != VK_SUCCESS) return;
+    if (!icon->descriptor_set) {
+        VkDescriptorSetAllocateInfo dsai = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = r->pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &r->set_layout,
+        };
+        if (vkAllocateDescriptorSets(dev, &dsai, &icon->descriptor_set) != VK_SUCCESS)
+            return;
 
-    VkDescriptorImageInfo di = {
-        .sampler = icon->sampler,
-        .imageView = icon->view,
-        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    };
-    VkWriteDescriptorSet write = {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = set,
-        .dstBinding = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &di,
-    };
-    vkUpdateDescriptorSets(dev, 1, &write, 0, NULL);
+        VkDescriptorImageInfo di = {
+            .sampler = icon->sampler,
+            .imageView = icon->view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+        VkWriteDescriptorSet write = {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = icon->descriptor_set,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &di,
+        };
+        vkUpdateDescriptorSets(dev, 1, &write, 0, NULL);
+    }
 
     VkCommandBuffer cmd = ctx->active_cmd;
     VkViewport viewport = {
@@ -419,7 +421,8 @@ void icon_draw(IconRenderer *r, Icon *icon, VkContext *ctx,
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->layout, 0, 1, &set, 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->layout, 0, 1,
+                            &icon->descriptor_set, 0, NULL);
 
     IconPush pc = {
         .rect = { x, y, w, h },
@@ -439,6 +442,4 @@ void icon_draw(IconRenderer *r, Icon *icon, VkContext *ctx,
                        0, sizeof(pc), &pc);
     vkCmdDraw(cmd, 6, 1, 0, 0);
 
-    /* Free set for reuse (pool has FREE bit) */
-    vkFreeDescriptorSets(dev, r->pool, 1, &set);
 }

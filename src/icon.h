@@ -22,6 +22,7 @@ typedef struct Icon {
     VkDeviceMemory memory;
     VkImageView view;
     VkSampler sampler;
+    VkDescriptorSet descriptor_set;
     bool ready;
 } Icon;
 

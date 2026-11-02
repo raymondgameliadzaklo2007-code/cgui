@@ -61,17 +61,6 @@ endforeach
 
 sources = files(
   'src/main.c',
-  'src/app/app.c',
-  'src/app/input.c',
-  'src/app/overlay_input.c',
-  'src/app/tabs.c',
-  'src/app/dialogs.c',
-  'src/project/project_tree.c',
-  'src/project/project_sidebar.c',
-  'src/ui/tab_bar.c',
-  'src/ui/status_bar.c',
-  'src/ui/search_bars.c',
-  'src/ui/font_picker.c',
   'src/gui.c',
   'src/style.c',
   'src/panel.c',

@@ -120,6 +120,14 @@ typedef struct App {
     char   goto_buf[32];
     int    goto_len;
 
+    bool   palette_open;
+    char   palette_query[128];
+    int    palette_len;
+    int    palette_sel;
+    int    palette_scroll;
+    int    palette_matches[64];
+    int    palette_match_count;
+
     char pending_open[1024];
     char pending_save[1024];
     int pending_save_tab;
@@ -704,10 +712,12 @@ static void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
                                                   : &app->project_chevron_right_icon;
         uint8_t chevron_tint[4] = { 120, 122, 128, 255 };
         uint8_t folder_tint[4] = { 148, 153, 160, 255 };
-        icon_draw(&app->icons, chevron, ctx, 10.0f, root_y + 4.0f,
+        icon_draw(&app->icons, chevron, ctx, 10.0f,
+                  (float)(int)(root_y + (row_h - 14.0f) * 0.5f),
                   14.0f, 14.0f, chevron_tint);
-        icon_draw(&app->icons, &app->project_folder_open_icon, ctx,
-                  27.0f, root_y + 3.0f, 16.0f, 16.0f, folder_tint);
+        icon_draw(&app->icons, &app->project_folder_open_icon, ctx, 27.0f,
+                  (float)(int)(root_y + (row_h - 16.0f) * 0.5f),
+                  16.0f, 16.0f, folder_tint);
     } else {
         font_draw(&app->font, ctx, 12.0f, root_baseline,
                   app->project_root_expanded ? "v" : ">", muted);
@@ -729,6 +739,19 @@ static void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         app->project_scroll = max_scroll;
 
     Editor *active = app_ed(app);
+    int active_parent = -2;
+    if (active && active->path[0]) {
+        for (size_t i = 0; i < app->project_entry_count; ++i) {
+            if (!app->project_entries[i].directory &&
+                strcmp(app->project_entries[i].path, active->path) == 0) {
+                active_parent = app->project_entries[i].parent;
+                break;
+            }
+        }
+    }
+    uint8_t guide[4] = { 70, 75, 84, 30 };
+    uint8_t guide_active[4] = { 70, 75, 84, 90 };
+
     for (int row = 0; row < rows_visible; ++row) {
         int visible_index = app->project_scroll + row;
         if ((size_t)visible_index >= app->project_visible_count)
@@ -739,19 +762,34 @@ static void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         bool row_hovered = mouse_x >= 4.0f && mouse_x < sidebar_w - 4.0f &&
                            mouse_y >= y && mouse_y < y + row_h;
         if (is_active)
-            vk_draw_rounded_rect(&app->draw, 5.0f, y - app->font.ascent,
-                                 sidebar_w - 10.0f, row_h, 4.0f, 1.0f, selected);
+            vk_draw_rounded_rect(&app->draw, 5.0f, y, sidebar_w - 10.0f, row_h,
+                                 4.0f, 1.0f, selected);
         else if (row_hovered)
-            vk_draw_rounded_rect(&app->draw, 5.0f, y - app->font.ascent,
-                                 sidebar_w - 10.0f, row_h, 4.0f, 1.0f, hover);
+            vk_draw_rounded_rect(&app->draw, 5.0f, y, sidebar_w - 10.0f, row_h,
+                                 4.0f, 1.0f, hover);
 
+        enum { MAX_GUIDE_DEPTH = 64 };
+        int ancestors[MAX_GUIDE_DEPTH];
         int depth = 0;
         for (int parent = entry->parent; parent >= 0;
-             parent = app->project_entries[parent].parent)
+             parent = app->project_entries[parent].parent) {
+            if (depth < MAX_GUIDE_DEPTH)
+                ancestors[depth] = parent;
             depth++;
+        }
         float indent = 12.0f + depth * 14.0f;
 
+        /* ancestors[] runs nearest-first; level d's directory is ancestors[depth-1-d]. */
+        for (int d = 0; d < depth && d < MAX_GUIDE_DEPTH; ++d) {
+            int dir = (depth - 1 - d) < MAX_GUIDE_DEPTH ? ancestors[depth - 1 - d] : -1;
+            float gx = 16.0f + d * 14.0f;
+            vk_draw_rounded_rect(&app->draw, gx, y, 1.0f, row_h, 0.0f, 1.0f,
+                                 dir == active_parent ? guide_active : guide);
+        }
+
         float baseline = y + (row_h + app->font.ascent + app->font.descent) * 0.5f;
+        float chevron_y = (float)(int)(y + (row_h - 12.0f) * 0.5f);
+        float glyph_y = (float)(int)(y + (row_h - 16.0f) * 0.5f);
         bool is_expanded_directory = entry->directory && entry->expanded;
         if (entry->directory) {
             if (app->project_icons_ok) {
@@ -759,7 +797,7 @@ static void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
                     ? &app->project_chevron_down_icon
                     : &app->project_chevron_right_icon;
                 uint8_t chevron_tint[4] = { 132, 134, 139, 255 };
-                icon_draw(&app->icons, chevron, ctx, indent - 2.0f, y + 3.0f,
+                icon_draw(&app->icons, chevron, ctx, indent - 2.0f, chevron_y,
                           12.0f, 12.0f, chevron_tint);
             } else {
                 font_draw(&app->font, ctx, indent, baseline,
@@ -770,7 +808,7 @@ static void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         uint8_t glyph_color[4];
         Icon *glyph = project_file_icon(app, entry, glyph_color);
         if (app->project_icons_ok) {
-            icon_draw(&app->icons, glyph, ctx, icon_x, y + 1.0f,
+            icon_draw(&app->icons, glyph, ctx, icon_x, glyph_y,
                       16.0f, 16.0f, glyph_color);
         } else {
             font_draw(&app->font, ctx, icon_x, baseline,
@@ -1214,6 +1252,345 @@ static void draw_goto_bar(App *app, VkContext *ctx)
     vk_draw_rounded_rect(&app->draw, fx + 10 + tw + 1, fy + 5, 2, fh - 10, 1, 1, accent);
 }
 
+/* ---------------------------------------------------------------- *
+ * Commands + command palette (Ctrl+Shift+P)                        *
+ * ---------------------------------------------------------------- */
+
+static void close_overlays(App *app)
+{
+    app->find_open = false;
+    app->goto_open = false;
+    app->picker_open = false;
+    app->palette_open = false;
+}
+
+static void cmd_new_file(App *app)      { tab_add(app, NULL, ""); }
+static void cmd_open_file(App *app)     { file_open_dialog(app); }
+static void cmd_open_folder(App *app)   { project_show_folder_dialog(app); }
+static void cmd_save_as(App *app)       { file_save_as_dialog(app); }
+static void cmd_close_tab(App *app)     { tab_close_at(app, app->tab_active); }
+
+static void cmd_save(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed) return;
+    if (!ed->path[0]) {
+        file_save_as_dialog(app);
+        return;
+    }
+    editor_save_file(ed, NULL);
+    update_window_title(app);
+}
+
+static void cycle_tab(App *app, int delta)
+{
+    if (app->tab_count <= 0) return;
+    app->tab_active = (app->tab_active + delta + app->tab_count) % app->tab_count;
+    update_window_title(app);
+}
+static void cmd_next_tab(App *app) { cycle_tab(app, 1); }
+static void cmd_prev_tab(App *app) { cycle_tab(app, -1); }
+
+static void open_find(App *app, bool replace)
+{
+    close_overlays(app);
+    app->find_open = true;
+    app->replace_mode = replace;
+    app->find_field = 0;
+    app->find_status[0] = 0;
+}
+static void cmd_find(App *app)    { open_find(app, false); }
+static void cmd_replace(App *app) { open_find(app, true); }
+
+static void cmd_goto_line(App *app)
+{
+    close_overlays(app);
+    app->goto_open = true;
+    app->goto_len = 0;
+    app->goto_buf[0] = 0;
+}
+
+static void cmd_select_font(App *app)
+{
+    close_overlays(app);
+    app->picker_open = true;
+    app->picker_sel = app->font_index;
+}
+
+static void set_font_size(App *app, float size)
+{
+    if (size < 8.0f) size = 8.0f;
+    if (size > 40.0f) size = 40.0f;
+    if (size == app->font_size || app->font_index < 0 ||
+        (size_t)app->font_index >= app->fonts.count)
+        return;
+    float previous = app->font_size;
+    app->font_size = size;
+    if (!reload_font(app, app->fonts.items[app->font_index].path))
+        app->font_size = previous;
+}
+static void cmd_font_bigger(App *app)  { set_font_size(app, app->font_size + 1.0f); }
+static void cmd_font_smaller(App *app) { set_font_size(app, app->font_size - 1.0f); }
+static void cmd_font_reset(App *app)   { set_font_size(app, 15.0f); }
+
+static void cmd_quit(App *app)
+{
+    if (!app->quit_pending) {
+        app->quit_pending = true;
+        if (!app->save_dialog_open)
+            continue_quit(app);
+    }
+}
+
+typedef struct Command {
+    const char *label;
+    const char *shortcut;
+    void (*run)(App *app);
+} Command;
+
+static const Command COMMANDS[] = {
+    { "File: New File",          "Ctrl+N",       cmd_new_file },
+    { "File: Open File…",        "Ctrl+O",       cmd_open_file },
+    { "File: Open Folder…",      "Ctrl+Shift+O", cmd_open_folder },
+    { "File: Save",              "Ctrl+S",       cmd_save },
+    { "File: Save As…",          "Ctrl+Shift+S", cmd_save_as },
+    { "Tab: Close",              "Ctrl+W",       cmd_close_tab },
+    { "Tab: Next",               "Ctrl+Tab",     cmd_next_tab },
+    { "Tab: Previous",           "Ctrl+Shift+Tab", cmd_prev_tab },
+    { "Search: Find",            "Ctrl+F",       cmd_find },
+    { "Search: Replace",         "Ctrl+H",       cmd_replace },
+    { "Go: Go to Line…",         "Ctrl+G",       cmd_goto_line },
+    { "View: Select Font…",      "F1",           cmd_select_font },
+    { "View: Increase Font Size", "Ctrl+=",      cmd_font_bigger },
+    { "View: Decrease Font Size", "Ctrl+-",      cmd_font_smaller },
+    { "View: Reset Font Size",   "Ctrl+0",       cmd_font_reset },
+    { "App: Quit",               "Ctrl+Q",       cmd_quit },
+};
+enum { COMMAND_COUNT = (int)(sizeof(COMMANDS) / sizeof(COMMANDS[0])) };
+
+static char ascii_lower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+/* Subsequence fuzzy match. Returns -1 on miss, higher is better. Rewards
+ * consecutive hits and hits at word starts so "ff" ranks "File: Find" over
+ * "Font Size". */
+static int fuzzy_score(const char *query, const char *text)
+{
+    if (!query[0]) return 0;
+    int score = 0, streak = 0;
+    const char *q = query;
+    for (const char *t = text; *t && *q; ++t) {
+        if (ascii_lower(*t) == ascii_lower(*q)) {
+            bool word_start = t == text || t[-1] == ' ' || t[-1] == ':';
+            streak++;
+            score += 1 + streak * 2 + (word_start ? 6 : 0);
+            q++;
+        } else {
+            streak = 0;
+        }
+    }
+    return *q ? -1 : score;
+}
+
+static void palette_filter(App *app)
+{
+    int scores[COMMAND_COUNT];
+    app->palette_match_count = 0;
+    for (int i = 0; i < COMMAND_COUNT; ++i) {
+        int s = fuzzy_score(app->palette_query, COMMANDS[i].label);
+        if (s < 0) continue;
+        /* insertion sort by score desc, stable for ties */
+        int at = app->palette_match_count++;
+        while (at > 0 && scores[at - 1] < s) {
+            scores[at] = scores[at - 1];
+            app->palette_matches[at] = app->palette_matches[at - 1];
+            at--;
+        }
+        scores[at] = s;
+        app->palette_matches[at] = i;
+    }
+    app->palette_sel = 0;
+    app->palette_scroll = 0;
+}
+
+static void palette_show(App *app)
+{
+    close_overlays(app);
+    app->palette_open = true;
+    app->palette_len = 0;
+    app->palette_query[0] = 0;
+    palette_filter(app);
+}
+
+static void palette_run_selected(App *app)
+{
+    if (app->palette_sel < 0 || app->palette_sel >= app->palette_match_count) return;
+    const Command *cmd = &COMMANDS[app->palette_matches[app->palette_sel]];
+    app->palette_open = false;
+    cmd->run(app);
+}
+
+typedef struct PaletteLayout {
+    float x, y, w, h;
+    float field_h;
+    float list_top;
+    float row_h;
+    int   visible;
+} PaletteLayout;
+
+static PaletteLayout palette_layout(const App *app)
+{
+    PaletteLayout l;
+    float ww = (float)app->vk.swapchain_extent.width;
+    float wh = (float)app->vk.swapchain_extent.height;
+    l.w = ww - 80.0f < 620.0f ? ww - 80.0f : 620.0f;
+    l.x = (float)(int)((ww - l.w) * 0.5f);
+    l.y = 28.0f + 40.0f;
+    l.field_h = app->font.line_height + 18.0f;
+    l.row_h = app->font.line_height + 10.0f;
+    l.list_top = l.y + l.field_h + 5.0f;
+    int max_rows = (int)((wh - l.list_top - 60.0f) / l.row_h);
+    if (max_rows > 10) max_rows = 10;
+    if (max_rows < 1) max_rows = 1;
+    int rows = app->palette_match_count < max_rows ? app->palette_match_count : max_rows;
+    l.visible = max_rows;
+    l.h = l.field_h + 5.0f + (rows > 0 ? rows : 1) * l.row_h + 6.0f;
+    return l;
+}
+
+static void draw_palette(App *app, VkContext *ctx)
+{
+    PaletteLayout l = palette_layout(app);
+    uint8_t scrim[4]    = { 20, 22, 26, 40 };
+    uint8_t border[4]   = { 205, 207, 212, 255 };
+    uint8_t panel[4]    = { 252, 252, 253, 255 };
+    uint8_t divider[4]  = { 228, 229, 232, 255 };
+    uint8_t text_c[4]   = { 36, 37, 41, 255 };
+    uint8_t dim[4]      = { 128, 130, 136, 255 };
+    uint8_t sel_bg[4]   = { 61, 133, 220, 34 };
+    uint8_t hover_bg[4] = { 70, 75, 84, 14 };
+    uint8_t accent[4]   = { 31, 94, 164, 255 };
+    uint8_t key_bg[4]   = { 70, 75, 84, 18 };
+
+    float ww = (float)ctx->swapchain_extent.width;
+    float wh = (float)ctx->swapchain_extent.height;
+    vk_draw_rounded_rect(&app->draw, 0, 0, ww, wh, 0.0f, 1.0f, scrim);
+    vk_draw_rounded_rect(&app->draw, l.x - 1, l.y - 1, l.w + 2, l.h + 2, 9.0f, 1.0f, border);
+    vk_draw_rounded_rect(&app->draw, l.x, l.y, l.w, l.h, 8.0f, 1.0f, panel);
+
+    float field_baseline = l.y + (l.field_h + app->font.ascent + app->font.descent) * 0.5f;
+    const char *shown = app->palette_len > 0 ? app->palette_query : "Type a command…";
+    font_draw(&app->font, ctx, l.x + 14.0f, field_baseline, shown,
+              app->palette_len > 0 ? text_c : dim);
+    float caret_x = l.x + 14.0f + (app->palette_len > 0
+                                   ? font_measure(&app->font, app->palette_query) + 1.0f
+                                   : 0.0f);
+    vk_draw_rounded_rect(&app->draw, caret_x, l.y + 9.0f, 2.0f, l.field_h - 18.0f,
+                         1.0f, 1.0f, accent);
+    vk_draw_rounded_rect(&app->draw, l.x, l.y + l.field_h, l.w, 1.0f, 0.0f, 1.0f, divider);
+
+    if (app->palette_sel < app->palette_scroll)
+        app->palette_scroll = app->palette_sel;
+    if (app->palette_sel >= app->palette_scroll + l.visible)
+        app->palette_scroll = app->palette_sel - l.visible + 1;
+
+    if (app->palette_match_count == 0) {
+        float b = l.list_top + (l.row_h + app->font.ascent + app->font.descent) * 0.5f;
+        font_draw(&app->font, ctx, l.x + 14.0f, b, "No matching commands", dim);
+        return;
+    }
+
+    float mouse_x, mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    for (int row = 0; row < l.visible; ++row) {
+        int idx = app->palette_scroll + row;
+        if (idx >= app->palette_match_count) break;
+        const Command *cmd = &COMMANDS[app->palette_matches[idx]];
+        float ry = l.list_top + row * l.row_h;
+        bool hovered = mouse_x >= l.x && mouse_x < l.x + l.w &&
+                       mouse_y >= ry && mouse_y < ry + l.row_h;
+        if (idx == app->palette_sel)
+            vk_draw_rounded_rect(&app->draw, l.x + 5.0f, ry, l.w - 10.0f, l.row_h,
+                                 5.0f, 1.0f, sel_bg);
+        else if (hovered)
+            vk_draw_rounded_rect(&app->draw, l.x + 5.0f, ry, l.w - 10.0f, l.row_h,
+                                 5.0f, 1.0f, hover_bg);
+
+        float baseline = ry + (l.row_h + app->font.ascent + app->font.descent) * 0.5f;
+        font_draw(&app->font, ctx, l.x + 14.0f, baseline, cmd->label, text_c);
+
+        float kw = font_measure(&app->font, cmd->shortcut);
+        float kx = l.x + l.w - 14.0f - kw;
+        vk_draw_rounded_rect(&app->draw, kx - 6.0f, ry + 4.0f, kw + 12.0f,
+                             l.row_h - 8.0f, 4.0f, 1.0f, key_bg);
+        font_draw(&app->font, ctx, kx, baseline, cmd->shortcut, dim);
+    }
+}
+
+/* Returns true when the event was consumed by the palette. */
+static bool palette_handle_event(App *app, const SDL_Event *ev)
+{
+    if (ev->type == SDL_EVENT_KEY_DOWN) {
+        SDL_Keycode key = ev->key.key;
+        if (key == SDLK_ESCAPE) {
+            app->palette_open = false;
+        } else if (key == SDLK_UP) {
+            if (app->palette_sel > 0) app->palette_sel--;
+        } else if (key == SDLK_DOWN) {
+            if (app->palette_sel + 1 < app->palette_match_count) app->palette_sel++;
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            palette_run_selected(app);
+        } else if (key == SDLK_BACKSPACE) {
+            if (app->palette_len > 0) {
+                app->palette_query[--app->palette_len] = 0;
+                palette_filter(app);
+            }
+        } else if (key == SDLK_P && (ev->key.mod & SDL_KMOD_CTRL) &&
+                   (ev->key.mod & SDL_KMOD_SHIFT)) {
+            app->palette_open = false;
+        }
+        return true;
+    }
+    if (ev->type == SDL_EVENT_TEXT_INPUT) {
+        for (const char *s = ev->text.text; s && *s; ++s) {
+            unsigned char ch = (unsigned char)*s;
+            if (ch < 32 || ch >= 127) continue;
+            if (app->palette_len + 1 < (int)sizeof(app->palette_query)) {
+                app->palette_query[app->palette_len++] = (char)ch;
+                app->palette_query[app->palette_len] = 0;
+            }
+        }
+        palette_filter(app);
+        return true;
+    }
+    if (ev->type == SDL_EVENT_MOUSE_WHEEL) {
+        app->palette_sel -= (int)ev->wheel.y;
+        if (app->palette_sel >= app->palette_match_count)
+            app->palette_sel = app->palette_match_count - 1;
+        if (app->palette_sel < 0) app->palette_sel = 0;
+        return true;
+    }
+    if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT) {
+        PaletteLayout l = palette_layout(app);
+        float mx = ev->button.x, my = ev->button.y;
+        bool inside = mx >= l.x && mx < l.x + l.w && my >= l.y && my < l.y + l.h;
+        if (!inside) {
+            app->palette_open = false;
+        } else if (my >= l.list_top) {
+            int idx = app->palette_scroll + (int)((my - l.list_top) / l.row_h);
+            if (idx >= 0 && idx < app->palette_match_count &&
+                idx < app->palette_scroll + l.visible) {
+                app->palette_sel = idx;
+                palette_run_selected(app);
+            }
+        }
+        return true;
+    }
+    return ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_MOTION;
+}
+
 int main(int argc, char **argv)
 {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -1398,10 +1775,39 @@ int main(int argc, char **argv)
             if (app.save_dialog_open)
                 continue;
 
+            if (app.palette_open) {
+                if (palette_handle_event(&app, &ev))
+                    continue;
+            }
+
             if (ev.type == SDL_EVENT_KEY_DOWN) {
                 SDL_Keymod mod = ev.key.mod;
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
                 bool shift = (mod & SDL_KMOD_SHIFT) != 0;
+
+                if (ctrl && shift && ev.key.key == SDLK_P) {
+                    palette_show(&app);
+                    continue;
+                }
+                if (!app.picker_open && ctrl && !shift &&
+                    (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS ||
+                     ev.key.key == SDLK_KP_PLUS)) {
+                    cmd_font_bigger(&app);
+                    continue;
+                }
+                if (!app.picker_open && ctrl &&
+                    (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS)) {
+                    cmd_font_smaller(&app);
+                    continue;
+                }
+                if (!app.picker_open && ctrl && ev.key.key == SDLK_0) {
+                    cmd_font_reset(&app);
+                    continue;
+                }
+                if (ctrl && ev.key.key == SDLK_Q) {
+                    cmd_quit(&app);
+                    continue;
+                }
 
                 if (ev.key.key == SDLK_F1) {
                     app.picker_open = !app.picker_open;
@@ -1736,6 +2142,8 @@ int main(int argc, char **argv)
             draw_find_bar(&app, &app.vk);
         if (app.picker_open)
             draw_picker(&app, &app.vk);
+        if (app.palette_open)
+            draw_palette(&app, &app.vk);
 
         if (!vk_context_end_frame(&app.vk))
             app.framebuffer_resized = true;

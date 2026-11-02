@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "app/overlay_input.h"
 #include "app/tabs.h"
 #include "ui/font_picker.h"

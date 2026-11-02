@@ -201,10 +201,10 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         bool row_hovered = mouse_x >= 4.0f && mouse_x < sidebar_w - 4.0f &&
                            mouse_y >= y && mouse_y < y + row_h;
         if (is_active)
-            vk_draw_rounded_rect(&app->draw, 5.0f, y - app->font.ascent,
+            vk_draw_rounded_rect(&app->draw, 5.0f, y,
                                  sidebar_w - 10.0f, row_h, 4.0f, 1.0f, selected);
         else if (row_hovered)
-            vk_draw_rounded_rect(&app->draw, 5.0f, y - app->font.ascent,
+            vk_draw_rounded_rect(&app->draw, 5.0f, y,
                                  sidebar_w - 10.0f, row_h, 4.0f, 1.0f, hover);
 
         int depth = 0;

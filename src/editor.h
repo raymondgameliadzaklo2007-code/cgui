@@ -28,6 +28,7 @@ typedef struct UndoRec {
     size_t   pos;
     char    *text;
     size_t   len;
+    unsigned group;   /* records sharing a group undo/redo together */
 } UndoRec;
 
 typedef struct Editor {
@@ -66,6 +67,9 @@ typedef struct Editor {
     UndoRec redo_stack[EDITOR_UNDO_MAX];
     int     redo_len;
     bool    undo_grouping; /* coalesce consecutive inserts */
+    unsigned undo_group_seq;
+    unsigned undo_group_cur;
+    int      undo_group_depth;
 
     char path[1024];   /* current file, empty if untitled */
     bool dirty;
@@ -87,6 +91,7 @@ void editor_delete_selection(Editor *ed);
 
 void editor_insert(Editor *ed, const char *utf8, size_t nbytes);
 void editor_backspace(Editor *ed);
+void editor_delete(Editor *ed);           /* forward delete (Delete key) */
 void editor_copy(Editor *ed);
 void editor_cut(Editor *ed);
 void editor_paste(Editor *ed);

@@ -47,6 +47,7 @@ typedef struct Editor {
     bool   selecting;   /* mouse drag in progress */
 
     float scroll_y;
+    float scroll_x;
     float view_w;
     float view_h;
     float view_x;
@@ -85,6 +86,10 @@ typedef struct Editor {
     bool  sb_dragging;
     float sb_drag_start_y;
     float sb_drag_start_scroll;
+
+    bool  sb_x_dragging;
+    float sb_x_drag_start_x;
+    float sb_x_drag_start_scroll;
 
     char  find_query[256];
     bool  find_case;
@@ -139,6 +144,7 @@ bool editor_find_matching_bracket(const Editor *ed, size_t pos, size_t *out_matc
 void editor_goto_line(Editor *ed, int line_1based);
 int  editor_line_count(const Editor *ed);
 int  editor_total_rows(const Editor *ed);
+float editor_max_content_width(const Editor *ed);
 int  editor_current_line(const Editor *ed);
 int  editor_current_col(const Editor *ed);
 

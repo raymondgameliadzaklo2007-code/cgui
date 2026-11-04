@@ -430,6 +430,28 @@ int editor_total_rows(const Editor *ed)
     return total > 0 ? total : 1;
 }
 
+float editor_max_content_width(const Editor *ed)
+{
+    if (!ed || !ed->font) return 0.0f;
+    size_t len = logical_len(ed);
+    size_t ls = 0;
+    float max_line_w = 0.0f;
+
+    while (ls <= len) {
+        size_t le = line_end(ed, ls);
+        float line_w = 0.0f;
+        for (size_t i = ls; i < le; ++i) {
+            line_w += char_width(ed, char_at(ed, i));
+        }
+        if (line_w > max_line_w) {
+            max_line_w = line_w;
+        }
+        if (le >= len) break;
+        ls = le + 1;
+    }
+    return max_line_w;
+}
+
 /** Map pixel position inside the view to a logical caret index. */
 static size_t index_from_point(const Editor *ed, float px, float py)
 {
@@ -440,7 +462,7 @@ static size_t index_from_point(const Editor *ed, float px, float py)
     int target_row = (int)(local_y / ed->line_height);
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
-    float local_x = px - ed->view_x - ed->pad_x - gutter;
+    float local_x = px - ed->view_x - ed->pad_x - gutter + (ed->soft_wrap ? 0.0f : ed->scroll_x);
     if (local_x < 0) local_x = 0;
 
     size_t len = logical_len(ed);
@@ -502,7 +524,7 @@ static void caret_pixel_pos(const Editor *ed, size_t pos, float *out_x, float *o
     if (pos > len) pos = len;
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
-    float text_left = ed->view_x + ed->pad_x + gutter;
+    float text_left = ed->view_x + ed->pad_x + gutter - (ed->soft_wrap ? 0.0f : ed->scroll_x);
 
     if (!ed->soft_wrap) {
         size_t ls = line_start(ed, pos);
@@ -629,6 +651,26 @@ static void ensure_caret_visible(Editor *ed)
     float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
     if (ed->scroll_y < 0) ed->scroll_y = 0;
     if (ed->scroll_y > max_scroll) ed->scroll_y = max_scroll;
+
+    if (!ed->soft_wrap) {
+        float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+        float visible_left = ed->view_x + ed->pad_x + gutter;
+        float visible_right = ed->view_x + ed->view_w - 24.0f; /* leave room for vertical scrollbar */
+
+        if (cx < visible_left + 16.0f) {
+            ed->scroll_x -= (visible_left + 16.0f - cx);
+        } else if (cx > visible_right - 16.0f) {
+            ed->scroll_x += (cx - (visible_right - 16.0f));
+        }
+
+        float max_content_w = editor_max_content_width(ed);
+        float visible_w = fmaxf(100.0f, ed->view_w - ed->pad_x * 2.0f - gutter - 24.0f);
+        float max_scroll_x = fmaxf(0.0f, max_content_w - visible_w + 40.0f);
+        if (ed->scroll_x < 0) ed->scroll_x = 0;
+        if (ed->scroll_x > max_scroll_x) ed->scroll_x = max_scroll_x;
+    } else {
+        ed->scroll_x = 0.0f;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1305,6 +1347,7 @@ void editor_set_text(Editor *ed, const char *text)
     ed->caret = 0;
     ed->sel_anchor = 0;
     ed->scroll_y = 0;
+    ed->scroll_x = 0;
     undo_stack_clear(&ed->undo);
     undo_stack_clear(&ed->redo);
     highlight_reset(&ed->hl);
@@ -1569,7 +1612,10 @@ void editor_set_find_query(Editor *ed, const char *query, bool case_sensitive)
 
 void editor_set_soft_wrap(Editor *ed, bool enable)
 {
-    if (ed) ed->soft_wrap = enable;
+    if (ed) {
+        ed->soft_wrap = enable;
+        if (enable) ed->scroll_x = 0.0f;
+    }
 }
 
 bool editor_get_soft_wrap(const Editor *ed)
@@ -1782,7 +1828,7 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
         float mx = (float)ev->button.x;
         float my = (float)ev->button.y;
 
-        /* Check scrollbar click */
+        /* Check vertical scrollbar click */
         float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
         float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
         float sb_hit_w = 16.0f;
@@ -1807,6 +1853,40 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
                 ed->sb_drag_start_scroll = ed->scroll_y;
             }
             break;
+        }
+
+        /* Check horizontal scrollbar click */
+        if (!ed->soft_wrap) {
+            float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+            float max_content_w = editor_max_content_width(ed);
+            float visible_w = fmaxf(100.0f, ed->view_w - ed->pad_x * 2.0f - gutter - 24.0f);
+            float max_scroll_x = fmaxf(0.0f, max_content_w - visible_w + 40.0f);
+            float sb_hit_h = 16.0f;
+
+            if (max_scroll_x > 0.0f && my >= ed->view_y + ed->view_h - sb_hit_h && my <= ed->view_y + ed->view_h) {
+                float sb_x = ed->view_x + gutter + 2.0f;
+                float sb_w = ed->view_w - gutter - 20.0f;
+                if (sb_w > 40.0f && mx >= sb_x && mx <= sb_x + sb_w) {
+                    float full_w = max_content_w + ed->pad_x * 2.0f + gutter + 40.0f;
+                    float thumb_w = fmaxf(24.0f, sb_w * (sb_w / full_w));
+                    float thumb_x = sb_x + (ed->scroll_x / max_scroll_x) * (sb_w - thumb_w);
+
+                    if (mx >= thumb_x && mx <= thumb_x + thumb_w) {
+                        ed->sb_x_dragging = true;
+                        ed->sb_x_drag_start_x = mx;
+                        ed->sb_x_drag_start_scroll = ed->scroll_x;
+                    } else {
+                        float ratio = (mx - sb_x - thumb_w * 0.5f) / (sb_w - thumb_w);
+                        if (ratio < 0.0f) ratio = 0.0f;
+                        if (ratio > 1.0f) ratio = 1.0f;
+                        ed->scroll_x = ratio * max_scroll_x;
+                        ed->sb_x_dragging = true;
+                        ed->sb_x_drag_start_x = mx;
+                        ed->sb_x_drag_start_scroll = ed->scroll_x;
+                    }
+                    break;
+                }
+            }
         }
 
         size_t idx = index_from_point(ed, mx, my);
@@ -1837,6 +1917,28 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
             }
             break;
         }
+        if (ed->sb_x_dragging) {
+            if ((ev->motion.state & SDL_BUTTON_LMASK) == 0) {
+                ed->sb_x_dragging = false;
+                break;
+            }
+            float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+            float max_content_w = editor_max_content_width(ed);
+            float visible_w = fmaxf(100.0f, ed->view_w - ed->pad_x * 2.0f - gutter - 24.0f);
+            float max_scroll_x = fmaxf(0.0f, max_content_w - visible_w + 40.0f);
+            float sb_w = ed->view_w - gutter - 20.0f;
+            float full_w = max_content_w + ed->pad_x * 2.0f + gutter + 40.0f;
+            float thumb_w = fmaxf(24.0f, sb_w * (sb_w / full_w));
+            float range = sb_w - thumb_w;
+            if (range > 0.0f && max_scroll_x > 0.0f) {
+                float dx = (float)ev->motion.x - ed->sb_x_drag_start_x;
+                float new_scroll = ed->sb_x_drag_start_scroll + (dx / range) * max_scroll_x;
+                if (new_scroll < 0.0f) new_scroll = 0.0f;
+                if (new_scroll > max_scroll_x) new_scroll = max_scroll_x;
+                ed->scroll_x = new_scroll;
+            }
+            break;
+        }
         if (!ed->selecting) break;
         if ((ev->motion.state & SDL_BUTTON_LMASK) == 0) {
             ed->selecting = false;
@@ -1851,16 +1953,38 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
         if (ev->button.button == SDL_BUTTON_LEFT) {
             ed->selecting = false;
             ed->sb_dragging = false;
+            ed->sb_x_dragging = false;
         }
         break;
     }
     case SDL_EVENT_MOUSE_WHEEL: {
         float step = ed->line_height * 3.0f;
-        ed->scroll_y -= ev->wheel.y * step;
+        bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+
+        if (shift && !ed->soft_wrap) {
+            ed->scroll_x -= ev->wheel.y * step;
+        } else {
+            ed->scroll_y -= ev->wheel.y * step;
+            if (!ed->soft_wrap && ev->wheel.x != 0.0f) {
+                ed->scroll_x += ev->wheel.x * step;
+            }
+        }
+
         float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
         float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
         if (ed->scroll_y < 0) ed->scroll_y = 0;
         if (ed->scroll_y > max_scroll) ed->scroll_y = max_scroll;
+
+        if (!ed->soft_wrap) {
+            float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+            float max_content_w = editor_max_content_width(ed);
+            float visible_w = fmaxf(100.0f, ed->view_w - ed->pad_x * 2.0f - gutter - 24.0f);
+            float max_scroll_x = fmaxf(0.0f, max_content_w - visible_w + 40.0f);
+            if (ed->scroll_x < 0) ed->scroll_x = 0;
+            if (ed->scroll_x > max_scroll_x) ed->scroll_x = max_scroll_x;
+        } else {
+            ed->scroll_x = 0.0f;
+        }
         break;
     }
     default:
@@ -1905,9 +2029,18 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
     }
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
-    float text_left = x + ed->pad_x + gutter;
+    float text_left = x + ed->pad_x + gutter - (ed->soft_wrap ? 0.0f : ed->scroll_x);
     float space_w = char_width(ed, ' ');
     float max_w = get_wrap_width(ed);
+
+    typedef struct VisLine {
+        int line_no;
+        float y;
+        bool is_cur;
+        bool is_continuation;
+    } VisLine;
+    VisLine vis_lines[256];
+    int num_vis_lines = 0;
 
     size_t sel_a = 0, sel_b = 0;
     bool has_sel = editor_has_selection(ed);
@@ -1978,6 +2111,15 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                                      line_y - ed->font->ascent < y + h);
 
                 if (row_visible) {
+                    /* Record visible line for gutter overlay */
+                    if (ed->show_line_numbers && num_vis_lines < 256) {
+                        vis_lines[num_vis_lines].line_no = line_no;
+                        vis_lines[num_vis_lines].y = line_y;
+                        vis_lines[num_vis_lines].is_cur = (line_no == cur_line);
+                        vis_lines[num_vis_lines].is_continuation = is_continuation;
+                        num_vis_lines++;
+                    }
+
                     /* Feature: Current line highlight */
                     if (line_no == cur_line && g_editor_draw) {
                         uint8_t cur_line_bg[4] = { 243, 245, 250, 255 };
@@ -1985,13 +2127,15 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                                              w - gutter, ed->line_height, 0.0f, 1.0f, cur_line_bg);
                     }
 
-                    /* Feature: Indent guides (drawn on primary row and continuation) */
+                    /* Feature: Indent guides (drawn on enclosing scopes: col 0, 4, 8... strictly before text) */
                     if (g_editor_draw && indent_levels > 0) {
                         uint8_t guide_col[4] = { 228, 230, 236, 255 };
-                        for (int lvl = 1; lvl <= indent_levels; ++lvl) {
+                        for (int lvl = 0; lvl < indent_levels; ++lvl) {
                             float gx = text_left + (float)(lvl * 4) * space_w;
-                            vk_draw_rounded_rect(g_editor_draw, gx, line_y - ed->font->ascent,
-                                                 1.0f, ed->line_height, 0.0f, 1.0f, guide_col);
+                            if (gx >= x + gutter && gx < x + w - 16.0f) {
+                                vk_draw_rounded_rect(g_editor_draw, gx, line_y - ed->font->ascent,
+                                                     1.0f, ed->line_height, 0.0f, 1.0f, guide_col);
+                            }
                         }
                     }
 
@@ -2008,15 +2152,17 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                                     for (size_t t = k; t < k + qlen; ++t)
                                         mw += char_width(ed, char_at(ed, t));
 
-                                    bool is_active_match = has_sel && sel_a == k && sel_b == k + qlen;
-                                    uint8_t match_c[4];
-                                    if (is_active_match) {
-                                        match_c[0] = 255; match_c[1] = 160; match_c[2] = 40; match_c[3] = 180;
-                                    } else {
-                                        match_c[0] = 255; match_c[1] = 225; match_c[2] = 100; match_c[3] = 120;
+                                    if (mx + mw >= x + gutter && mx < x + w) {
+                                        bool is_active_match = has_sel && sel_a == k && sel_b == k + qlen;
+                                        uint8_t match_c[4];
+                                        if (is_active_match) {
+                                            match_c[0] = 255; match_c[1] = 160; match_c[2] = 40; match_c[3] = 180;
+                                        } else {
+                                            match_c[0] = 255; match_c[1] = 225; match_c[2] = 100; match_c[3] = 120;
+                                        }
+                                        vk_draw_rounded_rect(g_editor_draw, mx, line_y - ed->font->ascent,
+                                                             mw, ed->line_height, 2.0f, 1.0f, match_c);
                                     }
-                                    vk_draw_rounded_rect(g_editor_draw, mx, line_y - ed->font->ascent,
-                                                         mw, ed->line_height, 2.0f, 1.0f, match_c);
                                 }
                             }
                         }
@@ -2033,7 +2179,7 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                             float sw = 0;
                             for (size_t k = hs; k < he; ++k)
                                 sw += char_width(ed, char_at(ed, k));
-                            if (sw > 0) {
+                            if (sw > 0 && sx + sw >= x + gutter && sx < x + w) {
                                 vk_draw_rounded_rect(g_editor_draw, sx, line_y - ed->font->ascent,
                                                      sw, ed->line_height, 0.0f, 1.0f, ed->sel_color);
                             }
@@ -2048,36 +2194,20 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                             for (size_t k = r_start; k < b1; ++k)
                                 bx += char_width(ed, char_at(ed, k));
                             float bw = char_width(ed, char_at(ed, b1));
-                            vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
-                                                 bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
+                            if (bx + bw >= x + gutter && bx < x + w) {
+                                vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
+                                                     bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
+                            }
                         }
                         if (b2 >= r_start && b2 < r_end) {
                             float bx = text_left;
                             for (size_t k = r_start; k < b2; ++k)
                                 bx += char_width(ed, char_at(ed, k));
                             float bw = char_width(ed, char_at(ed, b2));
-                            vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
-                                                 bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
-                        }
-                    }
-
-                    /* Line numbers in gutter */
-                    if (ed->show_line_numbers && ed->font) {
-                        if (!is_continuation) {
-                            char num[16];
-                            snprintf(num, sizeof(num), "%d", line_no);
-                            float nw = font_measure(ed->font, num);
-                            uint8_t num_c[4] = { 160, 160, 165, 255 };
-                            if (line_no == cur_line) {
-                                num_c[0] = 30; num_c[1] = 30; num_c[2] = 35; num_c[3] = 255;
+                            if (bx + bw >= x + gutter && bx < x + w) {
+                                vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
+                                                     bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
                             }
-                            font_draw(ed->font, ctx,
-                                      text_left - gutter + (gutter - nw - 8.0f),
-                                      line_y, num, num_c);
-                        } else {
-                            /* Subtle wrap continuation marker */
-                            uint8_t wrap_dot[4] = { 190, 190, 195, 200 };
-                            font_draw(ed->font, ctx, text_left - 12.0f, line_y, "·", wrap_dot);
                         }
                     }
 
@@ -2108,7 +2238,15 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                             float xoff = 0;
                             for (size_t t = 0; t < col0; ++t)
                                 xoff += char_width(ed, linebuf[row_off + t]);
-                            font_draw(ed->font, ctx, text_left + xoff, line_y, tmp, col);
+
+                            float rx = text_left + xoff;
+                            float rw = 0.0f;
+                            for (size_t t = 0; t < n; ++t)
+                                rw += char_width(ed, tmp[t]);
+
+                            if (rx + rw >= x + gutter && rx < x + w) {
+                                font_draw(ed->font, ctx, rx, line_y, tmp, col);
+                            }
                             col0 = col1;
                         }
                     }
@@ -2132,14 +2270,44 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
         caret_pixel_pos(ed, ed->caret, &cx, &cy);
         float chh = ed->font->ascent - ed->font->descent;
         if (cy + ed->font->descent > y && cy - ed->font->ascent < y + h) {
-            vk_draw_rounded_rect(g_editor_draw,
-                                 cx, cy - ed->font->ascent,
-                                 2.0f, chh,
-                                 1.0f, 1.0f, ed->caret_color);
+            if (cx >= x + gutter && cx <= x + w - 4.0f) {
+                vk_draw_rounded_rect(g_editor_draw,
+                                     cx, cy - ed->font->ascent,
+                                     2.0f, chh,
+                                     1.0f, 1.0f, ed->caret_color);
+            }
         }
     }
 
-    /* Feature: Visible scrollbar */
+    /* Gutter background & line numbers: occludes any horizontally scrolled text */
+    if (ed->show_line_numbers && gutter > 0.0f) {
+        if (g_editor_draw) {
+            /* Gutter background */
+            vk_draw_rounded_rect(g_editor_draw, x, y, gutter, h, 0.0f, 1.0f, ed->bg);
+            /* 1px subtle separator */
+            uint8_t sep_c[4] = { 228, 230, 235, 255 };
+            vk_draw_rounded_rect(g_editor_draw, x + gutter - 1.0f, y, 1.0f, h, 0.0f, 1.0f, sep_c);
+        }
+        if (ed->font) {
+            for (int v = 0; v < num_vis_lines; ++v) {
+                if (!vis_lines[v].is_continuation) {
+                    char num[16];
+                    snprintf(num, sizeof(num), "%d", vis_lines[v].line_no);
+                    float nw = font_measure(ed->font, num);
+                    uint8_t num_c[4] = { 160, 160, 165, 255 };
+                    if (vis_lines[v].is_cur) {
+                        num_c[0] = 30; num_c[1] = 30; num_c[2] = 35; num_c[3] = 255;
+                    }
+                    font_draw(ed->font, ctx, x + gutter - nw - 8.0f, vis_lines[v].y, num, num_c);
+                } else {
+                    uint8_t wrap_dot[4] = { 190, 190, 195, 200 };
+                    font_draw(ed->font, ctx, x + gutter - 12.0f, vis_lines[v].y, "·", wrap_dot);
+                }
+            }
+        }
+    }
+
+    /* Feature: Visible vertical scrollbar */
     float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
     if (g_editor_draw && content_h > h) {
         float sb_w = 6.0f;
@@ -2163,5 +2331,38 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
             thumb_c[0] = 120; thumb_c[1] = 125; thumb_c[2] = 135; thumb_c[3] = 240;
         }
         vk_draw_rounded_rect(g_editor_draw, sb_x, thumb_y, sb_w, thumb_h, 3.0f, 1.0f, thumb_c);
+    }
+
+    /* Feature: Horizontal scrollbar */
+    if (!ed->soft_wrap && g_editor_draw) {
+        float max_content_w = editor_max_content_width(ed);
+        float visible_w = fmaxf(100.0f, w - ed->pad_x * 2.0f - gutter - 24.0f);
+        float max_scroll_x = fmaxf(0.0f, max_content_w - visible_w + 40.0f);
+
+        if (max_scroll_x > 0.0f) {
+            float sb_h = 6.0f;
+            float sb_pad_b = 3.0f;
+            float sb_y = y + h - sb_h - sb_pad_b;
+            float sb_x = x + gutter + 2.0f;
+            float sb_w = w - gutter - 20.0f; /* leave room for vertical scrollbar */
+
+            if (sb_w > 40.0f) {
+                /* Track */
+                uint8_t track_c[4] = { 240, 240, 244, 90 };
+                vk_draw_rounded_rect(g_editor_draw, sb_x, sb_y - 1.0f, sb_w, sb_h + 2.0f, 3.0f, 1.0f, track_c);
+
+                float full_w = max_content_w + ed->pad_x * 2.0f + gutter + 40.0f;
+                float thumb_w = fmaxf(24.0f, sb_w * (sb_w / full_w));
+                float thumb_x = sb_x + (ed->scroll_x / max_scroll_x) * (sb_w - thumb_w);
+                if (thumb_x < sb_x) thumb_x = sb_x;
+                if (thumb_x + thumb_w > sb_x + sb_w) thumb_x = sb_x + sb_w - thumb_w;
+
+                uint8_t thumb_c[4] = { 170, 175, 185, 200 };
+                if (ed->sb_x_dragging) {
+                    thumb_c[0] = 120; thumb_c[1] = 125; thumb_c[2] = 135; thumb_c[3] = 240;
+                }
+                vk_draw_rounded_rect(g_editor_draw, thumb_x, sb_y, thumb_w, sb_h, 3.0f, 1.0f, thumb_c);
+            }
+        }
     }
 }

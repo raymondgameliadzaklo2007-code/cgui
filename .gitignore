@@ -1,2 +1,9 @@
+# Meson build directories
 /build/
-/subprojects/tree-sitter-c-src/
+/builddir/
+
+# Meson subprojects: ignore downloaded source trees, keep wrap files & packagefiles
+/subprojects/*
+!/subprojects/*.wrap
+!/subprojects/packagefiles/
+!/subprojects/packagefiles/**

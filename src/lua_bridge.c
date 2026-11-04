@@ -16,6 +16,8 @@
 
 #include <SDL3/SDL.h>
 #include "app.h"
+#include "palette.h"
+#include "tab_bar.h"
 
 static lua_State *g_L = NULL;
 static App *g_app = NULL;

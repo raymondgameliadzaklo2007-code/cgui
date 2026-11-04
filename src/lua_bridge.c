@@ -152,13 +152,18 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     uint8_t statusline_bg[4] = { 34, 38, 46, 255 };
 
     get_table_hex(L, t, "white", white);
-    get_table_hex(L, t, "darker_black", darker_black);
+    if (!get_table_hex(L, t, "darker_black", darker_black))
+        get_table_hex(L, t, "darkerblack", darker_black);
     get_table_hex(L, t, "black", black);
     get_table_hex(L, t, "line", line);
-    get_table_hex(L, t, "one_bg", one_bg);
-    get_table_hex(L, t, "one_bg2", one_bg2);
-    get_table_hex(L, t, "one_bg3", one_bg3);
-    get_table_hex(L, t, "grey_fg", grey_fg);
+    if (!get_table_hex(L, t, "one_bg", one_bg))
+        get_table_hex(L, t, "onebg", one_bg);
+    if (!get_table_hex(L, t, "one_bg2", one_bg2))
+        get_table_hex(L, t, "onebg2", one_bg2);
+    if (!get_table_hex(L, t, "one_bg3", one_bg3))
+        get_table_hex(L, t, "onebg3", one_bg3);
+    if (!get_table_hex(L, t, "grey_fg", grey_fg))
+        get_table_hex(L, t, "greyfg", grey_fg);
     get_table_hex(L, t, "red", red);
     get_table_hex(L, t, "green", green);
     get_table_hex(L, t, "nord_blue", nord_blue);
@@ -167,7 +172,8 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     get_table_hex(L, t, "purple", purple);
     get_table_hex(L, t, "teal", teal);
     get_table_hex(L, t, "orange", orange);
-    get_table_hex(L, t, "statusline_bg", statusline_bg);
+    if (!get_table_hex(L, t, "statusline_bg", statusline_bg))
+        get_table_hex(L, t, "statuslinebg", statusline_bg);
 
     if (pushed_base30) {
         lua_pop(L, 1);
@@ -720,6 +726,52 @@ bool lua_bridge_init(void)
 
     luaL_openlibs(g_L);
 
+    /* Preload 'base46' module and mock Neovim's 'vim' table so NvChad themes load outside Neovim */
+    const char *base46_shim =
+        "local base46 = {\n"
+        "  override_theme = function(M, name)\n"
+        "    return M\n"
+        "  end,\n"
+        "  get_theme_tb = function(type)\n"
+        "    return {}\n"
+        "  end,\n"
+        "  toggle_theme = function() end,\n"
+        "  load_all_highlights = function() end,\n"
+        "}\n"
+        "package.preload['base46'] = function()\n"
+        "  return base46\n"
+        "end\n"
+        "package.preload['base46.init'] = function()\n"
+        "  return base46\n"
+        "end\n"
+        "package.preload['base46.colors'] = function()\n"
+        "  return {}\n"
+        "end\n"
+        "table.insert(package.searchers, 1, function(modname)\n"
+        "  if modname == 'base46' or modname:sub(1, 7) == 'base46.' then\n"
+        "    return function() return base46 end\n"
+        "  end\n"
+        "  return nil\n"
+        "end)\n"
+        "if not vim then\n"
+        "  vim = {\n"
+        "    tbl_deep_extend = function(mode, ...)\n"
+        "      local res = {}\n"
+        "      for _, t in ipairs({...}) do\n"
+        "        if type(t) == 'table' then\n"
+        "          for k, v in pairs(t) do res[k] = v end\n"
+        "        end\n"
+        "      end\n"
+        "      return res\n"
+        "    end,\n"
+        "    g = {}\n"
+        "  }\n"
+        "end\n";
+    if (luaL_dostring(g_L, base46_shim) != LUA_OK) {
+        fprintf(stderr, "[cgui-lua] Failed to initialize base46 shim: %s\n", lua_tostring(g_L, -1));
+        lua_pop(g_L, 1);
+    }
+
     /* Create 'cgui' global table */
     lua_newtable(g_L);
 
@@ -768,6 +820,9 @@ bool lua_bridge_init(void)
     lua_setfield(g_L, -2, "config");
 
     lua_setglobal(g_L, "cgui");
+
+    /* Register 'cgui' in package.preload so require("cgui") works in user configs */
+    luaL_dostring(g_L, "package.preload['cgui'] = function() return cgui end");
 
     return true;
 }

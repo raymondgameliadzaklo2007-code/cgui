@@ -1,0 +1,9 @@
+[wrap-git]
+directory = base46
+url = https://github.com/NvChad/base46.git
+revision = v3.0
+depth = 1
+patch_directory = base46
+
+[provide]
+dependency_names = base46_dep

@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <math.h>
 #include <SDL3/SDL.h>
 
@@ -87,25 +88,47 @@ static void undo_rec_free(UndoRec *r)
     r->len = 0;
 }
 
-static void undo_stack_clear(UndoRec *stack, int *len)
+/** Drop every record but keep the allocation for reuse. */
+static void undo_stack_clear(UndoStack *s)
 {
-    for (int i = 0; i < *len; ++i) undo_rec_free(&stack[i]);
-    *len = 0;
+    for (int i = 0; i < s->len; ++i) undo_rec_free(&s->items[i]);
+    s->len = 0;
+}
+
+static void undo_stack_free(UndoStack *s)
+{
+    undo_stack_clear(s);
+    free(s->items);
+    s->items = NULL;
+    s->cap = 0;
+}
+
+/** Make room for one more record, doubling the capacity when full. */
+static bool undo_stack_reserve(UndoStack *s)
+{
+    if (s->len < s->cap) return true;
+    if (s->cap > INT_MAX / 2) return false;
+    int cap = s->cap ? s->cap * 2 : 64;
+    UndoRec *items = realloc(s->items, (size_t)cap * sizeof(*items));
+    if (!items) return false;
+    s->items = items;
+    s->cap = cap;
+    return true;
 }
 
 static void undo_push(Editor *ed, UndoKind kind, size_t pos, const char *text, size_t len)
 {
     /* Clear redo on new edit */
-    undo_stack_clear(ed->redo_stack, &ed->redo_len);
+    undo_stack_clear(&ed->redo);
 
     unsigned group = ed->undo_group_depth > 0 ? ed->undo_group_cur : ++ed->undo_group_seq;
 
     /* Coalesce sequential inserts at growing caret (typing). Never merge
      * into or out of a multi-record group (auto-indent, move line, …). */
-    if (kind == UNDO_INSERT && ed->undo_len > 0 && ed->undo_group_depth == 0) {
-        UndoRec *top = &ed->undo_stack[ed->undo_len - 1];
-        bool top_shared = ed->undo_len > 1 &&
-                          ed->undo_stack[ed->undo_len - 2].group == top->group;
+    if (kind == UNDO_INSERT && ed->undo.len > 0 && ed->undo_group_depth == 0) {
+        UndoRec *top = &ed->undo.items[ed->undo.len - 1];
+        bool top_shared = ed->undo.len > 1 &&
+                          ed->undo.items[ed->undo.len - 2].group == top->group;
         if (top->kind == UNDO_INSERT && top->pos + top->len == pos && !top_shared &&
             !(len == 1 && text[0] == '\n')) {
             char *n = realloc(top->text, top->len + len + 1);
@@ -119,14 +142,12 @@ static void undo_push(Editor *ed, UndoKind kind, size_t pos, const char *text, s
         }
     }
 
-    if (ed->undo_len == EDITOR_UNDO_MAX) {
-        undo_rec_free(&ed->undo_stack[0]);
-        memmove(&ed->undo_stack[0], &ed->undo_stack[1],
-                (EDITOR_UNDO_MAX - 1) * sizeof(UndoRec));
-        ed->undo_len--;
+    if (!undo_stack_reserve(&ed->undo)) {
+        fprintf(stderr, "warning: out of memory, edit not recorded for undo\n");
+        return;
     }
 
-    UndoRec *r = &ed->undo_stack[ed->undo_len++];
+    UndoRec *r = &ed->undo.items[ed->undo.len++];
     r->kind = kind;
     r->group = group;
     r->pos = pos;
@@ -137,7 +158,7 @@ static void undo_push(Editor *ed, UndoKind kind, size_t pos, const char *text, s
         r->text[len] = '\0';
     } else {
         r->len = 0;
-        ed->undo_len--;
+        ed->undo.len--;
     }
 }
 
@@ -480,8 +501,8 @@ bool editor_create(Editor *ed, Font *font, const char *initial)
 void editor_destroy(Editor *ed)
 {
     if (!ed) return;
-    undo_stack_clear(ed->undo_stack, &ed->undo_len);
-    undo_stack_clear(ed->redo_stack, &ed->redo_len);
+    undo_stack_free(&ed->undo);
+    undo_stack_free(&ed->redo);
     highlight_destroy(&ed->hl);
     free(ed->buf);
     memset(ed, 0, sizeof(*ed));
@@ -1059,18 +1080,16 @@ static void undo_apply_one(Editor *ed, UndoRec *rec, bool undo)
 
 static void undo_transfer(Editor *ed, bool undo)
 {
-    UndoRec *from = undo ? ed->undo_stack : ed->redo_stack;
-    int *from_len = undo ? &ed->undo_len : &ed->redo_len;
-    UndoRec *to = undo ? ed->redo_stack : ed->undo_stack;
-    int *to_len = undo ? &ed->redo_len : &ed->undo_len;
+    UndoStack *from = undo ? &ed->undo : &ed->redo;
+    UndoStack *to = undo ? &ed->redo : &ed->undo;
 
-    if (*from_len <= 0) return;
-    unsigned group = from[*from_len - 1].group;
-    while (*from_len > 0 && from[*from_len - 1].group == group) {
-        UndoRec rec = from[--(*from_len)];
+    if (from->len <= 0) return;
+    unsigned group = from->items[from->len - 1].group;
+    while (from->len > 0 && from->items[from->len - 1].group == group) {
+        UndoRec rec = from->items[--from->len];
         undo_apply_one(ed, &rec, undo);
-        if (*to_len < EDITOR_UNDO_MAX) {
-            to[(*to_len)++] = rec; /* takes ownership of text */
+        if (undo_stack_reserve(to)) {
+            to->items[to->len++] = rec; /* takes ownership of text */
         } else {
             undo_rec_free(&rec);
         }
@@ -1110,8 +1129,8 @@ void editor_set_text(Editor *ed, const char *text)
     ed->caret = 0;
     ed->sel_anchor = 0;
     ed->scroll_y = 0;
-    undo_stack_clear(ed->undo_stack, &ed->undo_len);
-    undo_stack_clear(ed->redo_stack, &ed->redo_len);
+    undo_stack_clear(&ed->undo);
+    undo_stack_clear(&ed->redo);
     highlight_reset(&ed->hl);
     ed->hl_dirty = true;
 }

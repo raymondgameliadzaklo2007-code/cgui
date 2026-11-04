@@ -61,6 +61,10 @@ endforeach
 
 sources = files(
   'src/main.c',
+  'src/tab_bar.c',
+  'src/sidebar.c',
+  'src/find_bar.c',
+  'src/palette.c',
   'src/gui.c',
   'src/style.c',
   'src/panel.c',

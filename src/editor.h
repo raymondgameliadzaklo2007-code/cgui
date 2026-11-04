@@ -16,8 +16,6 @@
 
 struct VkDraw;
 
-#define EDITOR_UNDO_MAX 128
-
 typedef enum UndoKind {
     UNDO_INSERT = 1,
     UNDO_DELETE = 2,
@@ -30,6 +28,13 @@ typedef struct UndoRec {
     size_t   len;
     unsigned group;   /* records sharing a group undo/redo together */
 } UndoRec;
+
+/* Growable stack of undo/redo records. Grows on demand, never discards. */
+typedef struct UndoStack {
+    UndoRec *items;
+    int      len;
+    int      cap;
+} UndoStack;
 
 typedef struct Editor {
     char  *buf;
@@ -62,10 +67,8 @@ typedef struct Editor {
     uint8_t sel_color[4];
     uint8_t bg[4];
 
-    UndoRec undo_stack[EDITOR_UNDO_MAX];
-    int     undo_len;
-    UndoRec redo_stack[EDITOR_UNDO_MAX];
-    int     redo_len;
+    UndoStack undo;
+    UndoStack redo;
     bool    undo_grouping; /* coalesce consecutive inserts */
     unsigned undo_group_seq;
     unsigned undo_group_cur;

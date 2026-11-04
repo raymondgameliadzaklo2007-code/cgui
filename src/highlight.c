@@ -410,3 +410,62 @@ void highlight_color(HlKind kind, uint8_t out[4])
     default:           out[0]=30;  out[1]=30;  out[2]=30;  out[3]=255; break;
     }
 }
+
+bool highlight_find_matching_bracket(const Highlighter *hl, size_t pos, size_t *out_match)
+{
+    if (!hl || !hl->ready || !hl->tree) return false;
+
+    TSTree *tree = (TSTree *)hl->tree;
+    TSNode root = ts_tree_root_node(tree);
+    TSNode node = ts_node_descendant_for_byte_range(root, (uint32_t)pos, (uint32_t)pos + 1);
+    if (ts_node_is_null(node)) return false;
+
+    const char *type = ts_node_type(node);
+    if (!type || type[0] == '\0' || type[1] != '\0') return false;
+    char b = type[0];
+
+    char target = 0;
+    bool is_opener = false;
+    if (b == '(')      { target = ')'; is_opener = true; }
+    else if (b == ')') { target = '('; is_opener = false; }
+    else if (b == '[') { target = ']'; is_opener = true; }
+    else if (b == ']') { target = '['; is_opener = false; }
+    else if (b == '{') { target = '}'; is_opener = true; }
+    else if (b == '}') { target = '{'; is_opener = false; }
+    else return false;
+
+    TSNode parent = ts_node_parent(node);
+    while (!ts_node_is_null(parent)) {
+        uint32_t child_count = ts_node_child_count(parent);
+        uint32_t node_start = ts_node_start_byte(node);
+
+        if (is_opener) {
+            for (int i = (int)child_count - 1; i >= 0; --i) {
+                TSNode ch = ts_node_child(parent, (uint32_t)i);
+                if (ts_node_start_byte(ch) > node_start) {
+                    const char *ctype = ts_node_type(ch);
+                    if (ctype && ctype[0] == target && ctype[1] == '\0') {
+                        if (out_match) *out_match = (size_t)ts_node_start_byte(ch);
+                        return true;
+                    }
+                }
+            }
+        } else {
+            for (uint32_t i = 0; i < child_count; ++i) {
+                TSNode ch = ts_node_child(parent, i);
+                if (ts_node_start_byte(ch) < node_start) {
+                    const char *ctype = ts_node_type(ch);
+                    if (ctype && ctype[0] == target && ctype[1] == '\0') {
+                        if (out_match) *out_match = (size_t)ts_node_start_byte(ch);
+                        return true;
+                    }
+                }
+            }
+        }
+        /* Check enclosing parent in case of wrapper grammar rules */
+        parent = ts_node_parent(parent);
+    }
+
+    return false;
+}
+

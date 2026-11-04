@@ -1,0 +1,8 @@
+{
+  "name": "cgui – Code Editor",
+  "description": "Fast, lightweight code editor written in C using SDL3, Vulkan, and tree-sitter.",
+  "requestFramePermissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

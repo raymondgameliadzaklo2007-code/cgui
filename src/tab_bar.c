@@ -77,6 +77,7 @@ bool tab_add(App *app, const char *path_or_null, const char *initial)
     Editor *ed = &app->tabs[app->tab_count];
     if (!editor_create(ed, &app->font, initial ? initial : ""))
         return false;
+    ed->soft_wrap = app->soft_wrap;
     if (path_or_null && path_or_null[0]) {
         if (!editor_load_file(ed, path_or_null)) {
             /* keep empty tab with path attempt failed - still usable */

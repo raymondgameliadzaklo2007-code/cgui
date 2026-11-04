@@ -32,6 +32,26 @@ void draw_find_bar(App *app, VkContext *ctx)
         vk_draw_rounded_rect(&app->draw, fx + 10 + tw + 1, fy + 5, 2, fh - 10, 1, 1, accent);
     }
 
+    /* Match count badge (e.g. "3 of 12") */
+    if (app->find_len > 0) {
+        int cur_match = 0;
+        int total_matches = editor_count_matches(app_ed(app), app->find_query, app->find_case, &cur_match);
+        char match_str[64];
+        if (total_matches == 0) {
+            snprintf(match_str, sizeof(match_str), "No matches");
+        } else if (cur_match > 0) {
+            snprintf(match_str, sizeof(match_str), "%d of %d", cur_match, total_matches);
+        } else {
+            snprintf(match_str, sizeof(match_str), "%d match%s", total_matches, total_matches == 1 ? "" : "es");
+        }
+        float mw = font_measure(&app->font, match_str);
+        uint8_t count_c[4] = { 110, 110, 125, 255 };
+        if (total_matches == 0) {
+            count_c[0] = 210; count_c[1] = 70; count_c[2] = 70; count_c[3] = 255;
+        }
+        font_draw(&app->font, ctx, fx + fw - mw - 12.0f, baseline, match_str, count_c);
+    }
+
     if (app->replace_mode) {
         float fy2 = fy + 32.0f;
         vk_draw_rounded_rect(&app->draw, fx, fy2, fw, fh, 6.0f, 1.0f, field);

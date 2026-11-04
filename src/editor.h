@@ -79,6 +79,16 @@ typedef struct Editor {
 
     Highlighter hl;
     bool hl_dirty;
+
+    /* Visual improvements */
+    bool  soft_wrap;
+    bool  sb_dragging;
+    float sb_drag_start_y;
+    float sb_drag_start_scroll;
+
+    char  find_query[256];
+    bool  find_case;
+    bool  find_active;
 } Editor;
 
 bool editor_create(Editor *ed, Font *font, const char *initial);
@@ -114,9 +124,21 @@ bool editor_replace_next(Editor *ed, const char *query, const char *replacement,
 /** Replace all occurrences. Returns count. */
 int  editor_replace_all(Editor *ed, const char *query, const char *replacement, bool case_sensitive);
 
+/** Count matches of query in editor. Writes 1-based index of active match to out_current if matched. */
+int  editor_count_matches(const Editor *ed, const char *query, bool case_sensitive, int *out_current);
+void editor_set_find_query(Editor *ed, const char *query, bool case_sensitive);
+
+/** Soft wrap setting */
+void editor_set_soft_wrap(Editor *ed, bool enable);
+bool editor_get_soft_wrap(const Editor *ed);
+
+/** Matching bracket lookup */
+bool editor_find_matching_bracket(const Editor *ed, size_t pos, size_t *out_match);
+
 /** 1-based line number. Clamps to valid range. */
 void editor_goto_line(Editor *ed, int line_1based);
 int  editor_line_count(const Editor *ed);
+int  editor_total_rows(const Editor *ed);
 int  editor_current_line(const Editor *ed);
 int  editor_current_col(const Editor *ed);
 

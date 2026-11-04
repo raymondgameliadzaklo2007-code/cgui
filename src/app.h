@@ -131,6 +131,7 @@ typedef struct App {
 
     bool running;
     bool framebuffer_resized;
+    bool soft_wrap;
 } App;
 
 /* Implemented in main.c */

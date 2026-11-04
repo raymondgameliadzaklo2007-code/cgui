@@ -331,6 +331,13 @@ static void cmd_quit(App *app)
     }
 }
 
+static void cmd_toggle_soft_wrap(App *app)
+{
+    app->soft_wrap = !app->soft_wrap;
+    for (int i = 0; i < app->tab_count; ++i)
+        app->tabs[i].soft_wrap = app->soft_wrap;
+}
+
 const Command app_commands[] = {
     { "File: New File",          "Ctrl+N",       cmd_new_file },
     { "File: Open File…",        "Ctrl+O",       cmd_open_file },
@@ -347,6 +354,7 @@ const Command app_commands[] = {
     { "View: Increase Font Size", "Ctrl+=",      cmd_font_bigger },
     { "View: Decrease Font Size", "Ctrl+-",      cmd_font_smaller },
     { "View: Reset Font Size",   "Ctrl+0",       cmd_font_reset },
+    { "View: Toggle Soft Wrap",   "Alt+Z",        cmd_toggle_soft_wrap },
     { "App: Quit",               "Ctrl+Q",       cmd_quit },
 };
 const int app_command_count = (int)(sizeof(app_commands) / sizeof(app_commands[0]));
@@ -544,6 +552,12 @@ int main(int argc, char **argv)
                 SDL_Keymod mod = ev.key.mod;
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
                 bool shift = (mod & SDL_KMOD_SHIFT) != 0;
+                bool alt = (mod & SDL_KMOD_ALT) != 0;
+
+                if (alt && !ctrl && ev.key.key == SDLK_Z) {
+                    cmd_toggle_soft_wrap(&app);
+                    continue;
+                }
 
                 if (ctrl && shift && ev.key.key == SDLK_P) {
                     palette_show(&app);
@@ -752,9 +766,11 @@ int main(int argc, char **argv)
         draw_tab_bar(&app, &app.vk);
         draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
         Editor *ed = app_ed(&app);
-        if (ed)
+        if (ed) {
+            editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
             editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
                         ww - PROJECT_SIDEBAR_WIDTH, wh - tab_h - status_h);
+        }
         draw_status_bar(&app, &app.vk);
 
         if (app.goto_open)

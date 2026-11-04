@@ -314,6 +314,14 @@ static size_t line_col(const Editor *ed, size_t pos)
     return pos - line_start(ed, pos);
 }
 
+/** Offset of the '\n' ending the line containing pos (or len). */
+static size_t line_end(const Editor *ed, size_t pos)
+{
+    size_t len = logical_len(ed);
+    while (pos < len && char_at(ed, pos) != '\n') pos++;
+    return pos;
+}
+
 static size_t count_lines(const Editor *ed)
 {
     size_t len = logical_len(ed);
@@ -324,6 +332,12 @@ static size_t count_lines(const Editor *ed)
     return lines;
 }
 
+typedef struct WrapRow {
+    size_t start;
+    size_t end;
+    bool   continuation;
+} WrapRow;
+
 static float char_width(const Editor *ed, char ch)
 {
     if (!ed->font) return 8.0f;
@@ -333,6 +347,89 @@ static float char_width(const Editor *ed, char ch)
     return ed->font->space_advance;
 }
 
+static float get_wrap_width(const Editor *ed)
+{
+    float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+    float max_w = ed->view_w - ed->pad_x * 2.0f - gutter - 24.0f;
+    return max_w > 100.0f ? max_w : 100.0f;
+}
+
+static int wrap_logical_line(const Editor *ed, size_t ls, size_t le, float max_w, WrapRow *out_rows, int max_out)
+{
+    if (!ed->soft_wrap || max_w <= 0.0f || le <= ls) {
+        if (max_out > 0) {
+            out_rows[0].start = ls;
+            out_rows[0].end = le;
+            out_rows[0].continuation = false;
+        }
+        return 1;
+    }
+
+    int count = 0;
+    size_t cur = ls;
+    float x = 0.0f;
+    size_t last_break = ls;
+    size_t row_start = ls;
+
+    while (cur < le) {
+        char c = char_at(ed, cur);
+        float w = char_width(ed, c);
+
+        if (x + w > max_w && cur > row_start) {
+            size_t break_at = (last_break > row_start) ? last_break : cur;
+            if (count < max_out) {
+                out_rows[count].start = row_start;
+                out_rows[count].end = break_at;
+                out_rows[count].continuation = (count > 0);
+            }
+            count++;
+            row_start = break_at;
+            while (row_start < le && char_at(ed, row_start) == ' ') row_start++;
+            cur = row_start;
+            x = 0.0f;
+            last_break = row_start;
+            continue;
+        }
+
+        if (c == ' ' || c == '\t') {
+            last_break = cur + 1;
+        }
+
+        x += w;
+        cur++;
+    }
+
+    if (row_start <= le) {
+        if (count < max_out) {
+            out_rows[count].start = row_start;
+            out_rows[count].end = le;
+            out_rows[count].continuation = (count > 0);
+        }
+        count++;
+    }
+
+    return count > 0 ? count : 1;
+}
+
+int editor_total_rows(const Editor *ed)
+{
+    if (!ed) return 0;
+    if (!ed->soft_wrap) return (int)count_lines(ed);
+
+    float max_w = get_wrap_width(ed);
+    size_t len = logical_len(ed);
+    size_t ls = 0;
+    int total = 0;
+
+    while (ls <= len) {
+        size_t le = line_end(ed, ls);
+        total += wrap_logical_line(ed, ls, le, max_w, NULL, 0);
+        if (le >= len) break;
+        ls = le + 1;
+    }
+    return total > 0 ? total : 1;
+}
+
 /** Map pixel position inside the view to a logical caret index. */
 static size_t index_from_point(const Editor *ed, float px, float py)
 {
@@ -340,51 +437,123 @@ static size_t index_from_point(const Editor *ed, float px, float py)
 
     float local_y = py - ed->view_y - ed->pad_y + ed->scroll_y;
     if (local_y < 0) local_y = 0;
-
-    size_t line = (size_t)(local_y / ed->line_height);
-    size_t ls = 0;
-    for (size_t i = 0; i < line; ++i) {
-        size_t nls = next_line_start(ed, ls);
-        if (nls == ls) break;
-        ls = nls;
-    }
+    int target_row = (int)(local_y / ed->line_height);
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
     float local_x = px - ed->view_x - ed->pad_x - gutter;
     if (local_x < 0) local_x = 0;
 
     size_t len = logical_len(ed);
-    size_t i = ls;
-    float x = 0.0f;
-    while (i < len) {
-        char c = char_at(ed, i);
-        if (c == '\n') break;
-        float w = char_width(ed, c);
-        if (x + w * 0.5f >= local_x) break;
-        x += w;
-        i++;
+
+    if (!ed->soft_wrap) {
+        size_t ls = 0;
+        for (int i = 0; i < target_row; ++i) {
+            size_t nls = next_line_start(ed, ls);
+            if (nls == ls) break;
+            ls = nls;
+        }
+        size_t i = ls;
+        float x = 0.0f;
+        while (i < len) {
+            char c = char_at(ed, i);
+            if (c == '\n') break;
+            float w = char_width(ed, c);
+            if (x + w * 0.5f >= local_x) break;
+            x += w;
+            i++;
+        }
+        return i;
     }
-    return i;
+
+    /* Soft wrap enabled */
+    float max_w = get_wrap_width(ed);
+    size_t ls = 0;
+    int cur_row = 0;
+
+    while (ls <= len) {
+        size_t le = line_end(ed, ls);
+        WrapRow rows[64];
+        int nr = wrap_logical_line(ed, ls, le, max_w, rows, 64);
+        if (cur_row + nr > target_row || le >= len) {
+            int r_idx = target_row - cur_row;
+            if (r_idx < 0) r_idx = 0;
+            if (r_idx >= nr) r_idx = nr - 1;
+            size_t i = rows[r_idx].start;
+            float x = 0.0f;
+            while (i < rows[r_idx].end) {
+                char c = char_at(ed, i);
+                float w = char_width(ed, c);
+                if (x + w * 0.5f >= local_x) break;
+                x += w;
+                i++;
+            }
+            return i;
+        }
+        cur_row += nr;
+        if (le >= len) break;
+        ls = le + 1;
+    }
+    return len;
 }
 
 static void caret_pixel_pos(const Editor *ed, size_t pos, float *out_x, float *out_y)
 {
-    size_t ls = line_start(ed, pos);
-    size_t line = 0;
-    size_t p = 0;
-    while (p < ls) {
-        if (char_at(ed, p) == '\n') line++;
-        p++;
-    }
+    size_t len = logical_len(ed);
+    if (pos > len) pos = len;
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
-    float x = ed->view_x + ed->pad_x + gutter;
-    for (size_t i = ls; i < pos; ++i) {
+    float text_left = ed->view_x + ed->pad_x + gutter;
+
+    if (!ed->soft_wrap) {
+        size_t ls = line_start(ed, pos);
+        size_t line = 0;
+        size_t p = 0;
+        while (p < ls) {
+            if (char_at(ed, p) == '\n') line++;
+            p++;
+        }
+        float x = text_left;
+        for (size_t i = ls; i < pos; ++i) {
+            x += char_width(ed, char_at(ed, i));
+        }
+        float y = ed->view_y + ed->pad_y + (ed->font ? ed->font->ascent : 14.0f)
+                + (float)line * ed->line_height - ed->scroll_y;
+        *out_x = x;
+        *out_y = y;
+        return;
+    }
+
+    /* Soft wrap enabled: find exact visual row */
+    float max_w = get_wrap_width(ed);
+    size_t target_ls = line_start(ed, pos);
+    size_t target_le = line_end(ed, pos);
+
+    size_t ls = 0;
+    int visual_row = 0;
+
+    while (ls < target_ls) {
+        size_t le = line_end(ed, ls);
+        visual_row += wrap_logical_line(ed, ls, le, max_w, NULL, 0);
+        ls = next_line_start(ed, ls);
+    }
+
+    WrapRow rows[64];
+    int nr = wrap_logical_line(ed, target_ls, target_le, max_w, rows, 64);
+    int row_idx = 0;
+    for (int r = 0; r < nr; ++r) {
+        if (pos >= rows[r].start && (pos <= rows[r].end || r == nr - 1)) {
+            row_idx = r;
+            break;
+        }
+    }
+
+    float x = text_left;
+    for (size_t i = rows[row_idx].start; i < pos && i < rows[row_idx].end; ++i) {
         x += char_width(ed, char_at(ed, i));
     }
 
-    float y = ed->view_y + ed->pad_y + ed->font->ascent
-            + (float)line * ed->line_height - ed->scroll_y;
+    float y = ed->view_y + ed->pad_y + (ed->font ? ed->font->ascent : 14.0f)
+            + (float)(visual_row + row_idx) * ed->line_height - ed->scroll_y;
 
     *out_x = x;
     *out_y = y;
@@ -456,7 +625,7 @@ static void ensure_caret_visible(Editor *ed)
         ed->scroll_y += (caret_bot - bot);
     }
 
-    float content_h = (float)count_lines(ed) * ed->line_height + ed->pad_y * 2.0f;
+    float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
     float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
     if (ed->scroll_y < 0) ed->scroll_y = 0;
     if (ed->scroll_y > max_scroll) ed->scroll_y = max_scroll;
@@ -662,38 +831,53 @@ static void move_right(Editor *ed, bool extend)
 
 static void move_vertical(Editor *ed, int dir, bool extend)
 {
-    size_t col = (size_t)ed->preferred_col;
-    size_t ls = line_start(ed, ed->caret);
+    if (!ed->soft_wrap) {
+        size_t col = (size_t)ed->preferred_col;
+        size_t ls = line_start(ed, ed->caret);
 
-    size_t target_ls;
-    if (dir < 0) {
-        if (ls == 0) {
-            set_caret(ed, 0, extend);
-            ensure_caret_visible(ed);
-            return;
+        size_t target_ls;
+        if (dir < 0) {
+            if (ls == 0) {
+                set_caret(ed, 0, extend);
+                ensure_caret_visible(ed);
+                return;
+            }
+            target_ls = line_start(ed, ls - 1);
+        } else {
+            target_ls = next_line_start(ed, ed->caret);
+            if (target_ls >= logical_len(ed) && char_at(ed, logical_len(ed) > 0 ? logical_len(ed) - 1 : 0) != '\n'
+                && target_ls == logical_len(ed)) {
+                /* stay / go end */
+            }
         }
-        target_ls = line_start(ed, ls - 1);
-    } else {
-        target_ls = next_line_start(ed, ed->caret);
-        if (target_ls >= logical_len(ed) && char_at(ed, logical_len(ed) > 0 ? logical_len(ed) - 1 : 0) != '\n'
-            && target_ls == logical_len(ed)) {
-            /* stay / go end */
+
+        size_t len = logical_len(ed);
+        size_t p = target_ls;
+        size_t c = 0;
+        while (p < len && c < col) {
+            if (char_at(ed, p) == '\n') break;
+            p++;
+            c++;
         }
+        set_caret(ed, p, extend);
+        ed->preferred_col = (float)col; /* keep preferred column */
+        ensure_caret_visible(ed);
+        return;
     }
 
-    size_t len = logical_len(ed);
-    size_t p = target_ls;
-    size_t c = 0;
-    while (p < len && c < col) {
-        if (char_at(ed, p) == '\n') break;
-        p++;
-        c++;
-    }
-    set_caret(ed, p, extend);
-    ed->preferred_col = (float)col; /* keep preferred column */
+    /* Soft wrap mode: move caret by visual row */
+    float cx, cy;
+    caret_pixel_pos(ed, ed->caret, &cx, &cy);
+    float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+    float target_x = ed->view_x + ed->pad_x + gutter + ed->preferred_col;
+    float target_y = cy + (float)dir * ed->line_height;
+
+    float pref = ed->preferred_col;
+    size_t target_idx = index_from_point(ed, target_x, target_y);
+    set_caret(ed, target_idx, extend);
+    ed->preferred_col = pref;
     ensure_caret_visible(ed);
 }
-
 
 /* ------------------------------------------------------------------ */
 /* Word / line helpers                                                 */
@@ -741,14 +925,6 @@ static size_t word_right(const Editor *ed, size_t pos)
             pos++;
         }
     }
-    return pos;
-}
-
-/** Offset of the '\n' ending the line containing pos (or len). */
-static size_t line_end(const Editor *ed, size_t pos)
-{
-    size_t len = logical_len(ed);
-    while (pos < len && char_at(ed, pos) != '\n') pos++;
     return pos;
 }
 
@@ -1352,6 +1528,124 @@ int editor_replace_all(Editor *ed, const char *query, const char *replacement, b
     return count;
 }
 
+int editor_count_matches(const Editor *ed, const char *query, bool case_sensitive, int *out_current)
+{
+    if (out_current) *out_current = 0;
+    if (!ed || !query || !query[0]) return 0;
+    size_t qlen = strlen(query);
+    size_t len = logical_len(ed);
+    if (qlen == 0 || qlen > len) return 0;
+
+    size_t sel_a = 0, sel_b = 0;
+    bool has_sel = editor_has_selection(ed);
+    if (has_sel) editor_get_selection(ed, &sel_a, &sel_b);
+
+    int count = 0;
+    int current = 0;
+    for (size_t i = 0; i + qlen <= len; ++i) {
+        if (match_at(ed, i, query, qlen, case_sensitive)) {
+            count++;
+            if (has_sel && sel_a == i && sel_b == i + qlen) {
+                current = count;
+            }
+        }
+    }
+    if (out_current) *out_current = current;
+    return count;
+}
+
+void editor_set_find_query(Editor *ed, const char *query, bool case_sensitive)
+{
+    if (!ed) return;
+    if (query && query[0]) {
+        snprintf(ed->find_query, sizeof(ed->find_query), "%s", query);
+        ed->find_case = case_sensitive;
+        ed->find_active = true;
+    } else {
+        ed->find_query[0] = 0;
+        ed->find_active = false;
+    }
+}
+
+void editor_set_soft_wrap(Editor *ed, bool enable)
+{
+    if (ed) ed->soft_wrap = enable;
+}
+
+bool editor_get_soft_wrap(const Editor *ed)
+{
+    return ed ? ed->soft_wrap : false;
+}
+
+static bool is_bracket_char(char c)
+{
+    return c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}';
+}
+
+bool editor_find_matching_bracket(const Editor *ed, size_t pos, size_t *out_match)
+{
+    if (!ed) return false;
+    size_t len = logical_len(ed);
+    if (pos >= len) return false;
+    char ch = char_at(ed, pos);
+    if (!is_bracket_char(ch)) return false;
+
+    /* 1. Try Tree-sitter AST */
+    if (highlight_find_matching_bracket(&ed->hl, pos, out_match)) {
+        if (*out_match < len && is_bracket_char(char_at(ed, *out_match))) {
+            return true;
+        }
+    }
+
+    /* 2. Fallback: lexical depth scan skipping comments and strings */
+    char open_ch, close_ch;
+    bool forward;
+    if (ch == '(')      { open_ch = '('; close_ch = ')'; forward = true; }
+    else if (ch == ')') { open_ch = ')'; close_ch = '('; forward = false; }
+    else if (ch == '[') { open_ch = '['; close_ch = ']'; forward = true; }
+    else if (ch == ']') { open_ch = ']'; close_ch = '['; forward = false; }
+    else if (ch == '{') { open_ch = '{'; close_ch = '}'; forward = true; }
+    else if (ch == '}') { open_ch = '}'; close_ch = '{'; forward = false; }
+    else return false;
+
+    int depth = 0;
+    if (forward) {
+        for (size_t i = pos; i < len; ++i) {
+            HlKind k = highlight_kind_at(&ed->hl, i);
+            if (k == HL_STRING || k == HL_COMMENT) continue;
+            char c = char_at(ed, i);
+            if (c == open_ch) depth++;
+            else if (c == close_ch) {
+                depth--;
+                if (depth == 0) {
+                    if (out_match) *out_match = i;
+                    return true;
+                }
+            }
+        }
+    } else {
+        for (size_t i = pos + 1; i-- > 0; ) {
+            HlKind k = highlight_kind_at(&ed->hl, i);
+            if (k == HL_STRING || k == HL_COMMENT) {
+                if (i == 0) break;
+                continue;
+            }
+            char c = char_at(ed, i);
+            if (c == open_ch) depth++;
+            else if (c == close_ch) {
+                depth--;
+                if (depth == 0) {
+                    if (out_match) *out_match = i;
+                    return true;
+                }
+            }
+            if (i == 0) break;
+        }
+    }
+
+    return false;
+}
+
 int editor_line_count(const Editor *ed)
 {
     return ed ? (int)count_lines(ed) : 0;
@@ -1487,6 +1781,34 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
         if (ev->button.button != SDL_BUTTON_LEFT) break;
         float mx = (float)ev->button.x;
         float my = (float)ev->button.y;
+
+        /* Check scrollbar click */
+        float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
+        float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
+        float sb_hit_w = 16.0f;
+
+        if (max_scroll > 0.0f && mx >= ed->view_x + ed->view_w - sb_hit_w && mx <= ed->view_x + ed->view_w) {
+            float sb_y = ed->view_y + 2.0f;
+            float sb_h = ed->view_h - 4.0f;
+            float thumb_h = fmaxf(24.0f, sb_h * (sb_h / content_h));
+            float thumb_y = sb_y + (ed->scroll_y / max_scroll) * (sb_h - thumb_h);
+
+            if (my >= thumb_y && my <= thumb_y + thumb_h) {
+                ed->sb_dragging = true;
+                ed->sb_drag_start_y = my;
+                ed->sb_drag_start_scroll = ed->scroll_y;
+            } else {
+                float ratio = (my - sb_y - thumb_h * 0.5f) / (sb_h - thumb_h);
+                if (ratio < 0.0f) ratio = 0.0f;
+                if (ratio > 1.0f) ratio = 1.0f;
+                ed->scroll_y = ratio * max_scroll;
+                ed->sb_dragging = true;
+                ed->sb_drag_start_y = my;
+                ed->sb_drag_start_scroll = ed->scroll_y;
+            }
+            break;
+        }
+
         size_t idx = index_from_point(ed, mx, my);
         bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
         set_caret(ed, idx, shift);
@@ -1496,6 +1818,25 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
         break;
     }
     case SDL_EVENT_MOUSE_MOTION: {
+        if (ed->sb_dragging) {
+            if ((ev->motion.state & SDL_BUTTON_LMASK) == 0) {
+                ed->sb_dragging = false;
+                break;
+            }
+            float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
+            float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
+            float sb_h = ed->view_h - 4.0f;
+            float thumb_h = fmaxf(24.0f, sb_h * (sb_h / content_h));
+            float range = sb_h - thumb_h;
+            if (range > 0.0f && max_scroll > 0.0f) {
+                float dy = (float)ev->motion.y - ed->sb_drag_start_y;
+                float new_scroll = ed->sb_drag_start_scroll + (dy / range) * max_scroll;
+                if (new_scroll < 0.0f) new_scroll = 0.0f;
+                if (new_scroll > max_scroll) new_scroll = max_scroll;
+                ed->scroll_y = new_scroll;
+            }
+            break;
+        }
         if (!ed->selecting) break;
         if ((ev->motion.state & SDL_BUTTON_LMASK) == 0) {
             ed->selecting = false;
@@ -1507,14 +1848,16 @@ void editor_handle_event(Editor *ed, const void *ev_ptr)
         break;
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (ev->button.button == SDL_BUTTON_LEFT)
+        if (ev->button.button == SDL_BUTTON_LEFT) {
             ed->selecting = false;
+            ed->sb_dragging = false;
+        }
         break;
     }
     case SDL_EVENT_MOUSE_WHEEL: {
         float step = ed->line_height * 3.0f;
         ed->scroll_y -= ev->wheel.y * step;
-        float content_h = (float)count_lines(ed) * ed->line_height + ed->pad_y * 2.0f;
+        float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
         float max_scroll = fmaxf(0.0f, content_h - ed->view_h);
         if (ed->scroll_y < 0) ed->scroll_y = 0;
         if (ed->scroll_y > max_scroll) ed->scroll_y = max_scroll;
@@ -1557,24 +1900,40 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
         ed->hl_dirty = false;
     }
 
-
     if (g_editor_draw) {
         vk_draw_rounded_rect(g_editor_draw, x, y, w, h, 0.0f, 1.0f, ed->bg);
     }
 
     float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
     float text_left = x + ed->pad_x + gutter;
+    float space_w = char_width(ed, ' ');
+    float max_w = get_wrap_width(ed);
 
     size_t sel_a = 0, sel_b = 0;
     bool has_sel = editor_has_selection(ed);
     if (has_sel) editor_get_selection(ed, &sel_a, &sel_b);
 
     size_t len = logical_len(ed);
+
+    /* 1. Bracket match search for caret */
+    size_t b1 = (size_t)-1, b2 = (size_t)-1;
+    if (ed->caret < len && is_bracket_char(char_at(ed, ed->caret))) {
+        b1 = ed->caret;
+        editor_find_matching_bracket(ed, b1, &b2);
+    } else if (ed->caret > 0 && is_bracket_char(char_at(ed, ed->caret - 1))) {
+        b1 = ed->caret - 1;
+        editor_find_matching_bracket(ed, b1, &b2);
+    }
+
+    /* 2. Active caret line */
+    int cur_line = editor_current_line(ed);
+
     size_t i = 0;
     size_t line_start_idx = 0;
     float line_y = y + ed->pad_y + ed->font->ascent - ed->scroll_y;
-    char linebuf[2048];
+    char linebuf[4096];
     int line_no = 1;
+    int prev_indent_levels = 0;
 
     while (i <= len) {
         bool at_end = (i == len);
@@ -1588,85 +1947,186 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                 linebuf[k] = char_at(ed, line_start_idx + k);
             linebuf[line_len] = 0;
 
-            /* Selection highlight for this line */
-            if (has_sel && g_editor_draw && line_y + ed->font->descent > y &&
-                line_y - ed->font->ascent < y + h) {
-                size_t line_end = i;
-                size_t hs = sel_a > line_start_idx ? sel_a : line_start_idx;
-                size_t he = sel_b < line_end ? sel_b : line_end;
-                if (hs < he) {
-                    float sx = text_left;
-                    for (size_t k = line_start_idx; k < hs; ++k)
-                        sx += char_width(ed, char_at(ed, k));
-                    float sw = 0;
-                    for (size_t k = hs; k < he; ++k)
-                        sw += char_width(ed, char_at(ed, k));
-                    if (sw < 1.0f && hs == he) sw = 0;
-                    if (sw > 0) {
-                        vk_draw_rounded_rect(
-                            g_editor_draw,
-                            sx, line_y - ed->font->ascent,
-                            sw, ed->line_height,
-                            0.0f, 1.0f, ed->sel_color);
-                    }
-                }
+            /* Indent level of this logical line */
+            int indent_levels = 0;
+            size_t ws_cols = 0;
+            bool only_ws = true;
+            for (size_t k = 0; k < line_len; ++k) {
+                if (linebuf[k] == ' ') ws_cols++;
+                else if (linebuf[k] == '\t') ws_cols += 4;
+                else { only_ws = false; break; }
+            }
+            if (!only_ws) {
+                indent_levels = (int)(ws_cols / 4);
+                prev_indent_levels = indent_levels;
+            } else {
+                /* For blank / whitespace lines, carry over previous indentation */
+                indent_levels = prev_indent_levels;
             }
 
-            bool line_visible = (line_y + ed->font->descent > y &&
-                                 line_y - ed->font->ascent < y + h);
+            /* Logical line can be wrapped into 1 or more rows */
+            WrapRow rows[64];
+            int nr = wrap_logical_line(ed, line_start_idx, i, max_w, rows, 64);
 
-            if (line_visible && ed->show_line_numbers && ed->font) {
-                char num[16];
-                snprintf(num, sizeof(num), "%d", line_no);
-                float nw = font_measure(ed->font, num);
-                uint8_t dim[4] = { 160, 160, 165, 255 };
-                font_draw(ed->font, ctx,
-                          text_left - gutter + (gutter - nw - 8.0f),
-                          line_y, num, dim);
-            }
+            for (int r = 0; r < nr; ++r) {
+                size_t r_start = rows[r].start;
+                size_t r_end   = rows[r].end;
+                size_t r_len   = r_end > r_start ? r_end - r_start : 0;
+                bool is_continuation = rows[r].continuation;
 
-            if (line_visible && line_len > 0) {
-                /* Syntax-coloured runs */
-                size_t col0 = 0;
-                while (col0 < line_len) {
-                    size_t abs = line_start_idx + col0;
-                    HlKind k = highlight_kind_at(&ed->hl, abs);
-                    size_t col1 = col0 + 1;
-                    while (col1 < line_len &&
-                           highlight_kind_at(&ed->hl, line_start_idx + col1) == k)
-                        col1++;
-                    char tmp[2048];
-                    size_t n = col1 - col0;
-                    if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
-                    memcpy(tmp, linebuf + col0, n);
-                    tmp[n] = 0;
-                    uint8_t col[4];
-                    highlight_color(k, col);
-                    if (k == HL_DEFAULT) {
-                        col[0] = ed->text_color[0];
-                        col[1] = ed->text_color[1];
-                        col[2] = ed->text_color[2];
-                        col[3] = ed->text_color[3];
+                bool row_visible = (line_y + ed->font->descent > y &&
+                                     line_y - ed->font->ascent < y + h);
+
+                if (row_visible) {
+                    /* Feature: Current line highlight */
+                    if (line_no == cur_line && g_editor_draw) {
+                        uint8_t cur_line_bg[4] = { 243, 245, 250, 255 };
+                        vk_draw_rounded_rect(g_editor_draw, x + gutter, line_y - ed->font->ascent,
+                                             w - gutter, ed->line_height, 0.0f, 1.0f, cur_line_bg);
                     }
-                    float xoff = 0;
-                    for (size_t t = 0; t < col0; ++t)
-                        xoff += char_width(ed, linebuf[t]);
-                    font_draw(ed->font, ctx, text_left + xoff, line_y, tmp, col);
-                    col0 = col1;
+
+                    /* Feature: Indent guides (drawn on primary row and continuation) */
+                    if (g_editor_draw && indent_levels > 0) {
+                        uint8_t guide_col[4] = { 228, 230, 236, 255 };
+                        for (int lvl = 1; lvl <= indent_levels; ++lvl) {
+                            float gx = text_left + (float)(lvl * 4) * space_w;
+                            vk_draw_rounded_rect(g_editor_draw, gx, line_y - ed->font->ascent,
+                                                 1.0f, ed->line_height, 0.0f, 1.0f, guide_col);
+                        }
+                    }
+
+                    /* Feature: Highlight every find match */
+                    if (ed->find_active && ed->find_query[0] && g_editor_draw) {
+                        size_t qlen = strlen(ed->find_query);
+                        if (qlen > 0 && r_len >= qlen) {
+                            for (size_t k = r_start; k + qlen <= r_end; ++k) {
+                                if (match_at(ed, k, ed->find_query, qlen, ed->find_case)) {
+                                    float mx = text_left;
+                                    for (size_t t = r_start; t < k; ++t)
+                                        mx += char_width(ed, char_at(ed, t));
+                                    float mw = 0.0f;
+                                    for (size_t t = k; t < k + qlen; ++t)
+                                        mw += char_width(ed, char_at(ed, t));
+
+                                    bool is_active_match = has_sel && sel_a == k && sel_b == k + qlen;
+                                    uint8_t match_c[4];
+                                    if (is_active_match) {
+                                        match_c[0] = 255; match_c[1] = 160; match_c[2] = 40; match_c[3] = 180;
+                                    } else {
+                                        match_c[0] = 255; match_c[1] = 225; match_c[2] = 100; match_c[3] = 120;
+                                    }
+                                    vk_draw_rounded_rect(g_editor_draw, mx, line_y - ed->font->ascent,
+                                                         mw, ed->line_height, 2.0f, 1.0f, match_c);
+                                }
+                            }
+                        }
+                    }
+
+                    /* Selection highlight for this row */
+                    if (has_sel && g_editor_draw) {
+                        size_t hs = sel_a > r_start ? sel_a : r_start;
+                        size_t he = sel_b < r_end ? sel_b : r_end;
+                        if (hs < he) {
+                            float sx = text_left;
+                            for (size_t k = r_start; k < hs; ++k)
+                                sx += char_width(ed, char_at(ed, k));
+                            float sw = 0;
+                            for (size_t k = hs; k < he; ++k)
+                                sw += char_width(ed, char_at(ed, k));
+                            if (sw > 0) {
+                                vk_draw_rounded_rect(g_editor_draw, sx, line_y - ed->font->ascent,
+                                                     sw, ed->line_height, 0.0f, 1.0f, ed->sel_color);
+                            }
+                        }
+                    }
+
+                    /* Feature: Matching bracket highlight */
+                    if (g_editor_draw && b1 != (size_t)-1 && b2 != (size_t)-1) {
+                        uint8_t bracket_bg[4] = { 180, 215, 255, 175 };
+                        if (b1 >= r_start && b1 < r_end) {
+                            float bx = text_left;
+                            for (size_t k = r_start; k < b1; ++k)
+                                bx += char_width(ed, char_at(ed, k));
+                            float bw = char_width(ed, char_at(ed, b1));
+                            vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
+                                                 bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
+                        }
+                        if (b2 >= r_start && b2 < r_end) {
+                            float bx = text_left;
+                            for (size_t k = r_start; k < b2; ++k)
+                                bx += char_width(ed, char_at(ed, k));
+                            float bw = char_width(ed, char_at(ed, b2));
+                            vk_draw_rounded_rect(g_editor_draw, bx, line_y - ed->font->ascent,
+                                                 bw, ed->line_height, 2.0f, 1.0f, bracket_bg);
+                        }
+                    }
+
+                    /* Line numbers in gutter */
+                    if (ed->show_line_numbers && ed->font) {
+                        if (!is_continuation) {
+                            char num[16];
+                            snprintf(num, sizeof(num), "%d", line_no);
+                            float nw = font_measure(ed->font, num);
+                            uint8_t num_c[4] = { 160, 160, 165, 255 };
+                            if (line_no == cur_line) {
+                                num_c[0] = 30; num_c[1] = 30; num_c[2] = 35; num_c[3] = 255;
+                            }
+                            font_draw(ed->font, ctx,
+                                      text_left - gutter + (gutter - nw - 8.0f),
+                                      line_y, num, num_c);
+                        } else {
+                            /* Subtle wrap continuation marker */
+                            uint8_t wrap_dot[4] = { 190, 190, 195, 200 };
+                            font_draw(ed->font, ctx, text_left - 12.0f, line_y, "·", wrap_dot);
+                        }
+                    }
+
+                    /* Syntax-coloured runs for this row */
+                    if (r_len > 0) {
+                        size_t row_off = r_start - line_start_idx;
+                        size_t col0 = 0;
+                        while (col0 < r_len) {
+                            size_t abs_pos = r_start + col0;
+                            HlKind k = highlight_kind_at(&ed->hl, abs_pos);
+                            size_t col1 = col0 + 1;
+                            while (col1 < r_len &&
+                                   highlight_kind_at(&ed->hl, r_start + col1) == k)
+                                col1++;
+                            char tmp[2048];
+                            size_t n = col1 - col0;
+                            if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+                            memcpy(tmp, linebuf + row_off + col0, n);
+                            tmp[n] = 0;
+                            uint8_t col[4];
+                            highlight_color(k, col);
+                            if (k == HL_DEFAULT) {
+                                col[0] = ed->text_color[0];
+                                col[1] = ed->text_color[1];
+                                col[2] = ed->text_color[2];
+                                col[3] = ed->text_color[3];
+                            }
+                            float xoff = 0;
+                            for (size_t t = 0; t < col0; ++t)
+                                xoff += char_width(ed, linebuf[row_off + t]);
+                            font_draw(ed->font, ctx, text_left + xoff, line_y, tmp, col);
+                            col0 = col1;
+                        }
+                    }
                 }
+
+                line_y += ed->line_height;
             }
 
             if (at_end) break;
             line_start_idx = i + 1;
             line_no++;
-            line_y += ed->line_height;
             i++;
             continue;
         }
         i++;
     }
 
-    /* Caret (hidden while selecting a range – still show at caret end) */
+    /* Caret */
     if (g_editor_draw) {
         float cx, cy;
         caret_pixel_pos(ed, ed->caret, &cx, &cy);
@@ -1677,5 +2137,31 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                                  2.0f, chh,
                                  1.0f, 1.0f, ed->caret_color);
         }
+    }
+
+    /* Feature: Visible scrollbar */
+    float content_h = (float)editor_total_rows(ed) * ed->line_height + ed->pad_y * 2.0f;
+    if (g_editor_draw && content_h > h) {
+        float sb_w = 6.0f;
+        float sb_pad_r = 3.0f;
+        float sb_x = x + w - sb_w - sb_pad_r;
+        float sb_y = y + 2.0f;
+        float sb_h = h - 4.0f;
+
+        /* Track */
+        uint8_t track_c[4] = { 240, 240, 244, 90 };
+        vk_draw_rounded_rect(g_editor_draw, sb_x - 1.0f, sb_y, sb_w + 2.0f, sb_h, 3.0f, 1.0f, track_c);
+
+        float thumb_h = fmaxf(24.0f, sb_h * (sb_h / content_h));
+        float max_scroll = content_h - h;
+        float thumb_y = sb_y + (ed->scroll_y / max_scroll) * (sb_h - thumb_h);
+        if (thumb_y < sb_y) thumb_y = sb_y;
+        if (thumb_y + thumb_h > sb_y + sb_h) thumb_y = sb_y + sb_h - thumb_h;
+
+        uint8_t thumb_c[4] = { 170, 175, 185, 200 };
+        if (ed->sb_dragging) {
+            thumb_c[0] = 120; thumb_c[1] = 125; thumb_c[2] = 135; thumb_c[3] = 240;
+        }
+        vk_draw_rounded_rect(g_editor_draw, sb_x, thumb_y, sb_w, thumb_h, 3.0f, 1.0f, thumb_c);
     }
 }

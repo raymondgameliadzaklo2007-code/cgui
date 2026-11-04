@@ -94,4 +94,7 @@ HlKind highlight_kind_at(const Highlighter *hl, size_t offset);
 /** Colour for kind (RGBA 0–255). */
 void highlight_color(HlKind kind, uint8_t out[4]);
 
+/** Find matching bracket at byte offset using Tree-sitter AST. */
+bool highlight_find_matching_bracket(const Highlighter *hl, size_t pos, size_t *out_match);
+
 #endif /* HIGHLIGHT_H */

@@ -107,6 +107,19 @@ static bool get_table_hex(lua_State *L, int tidx, const char *key, uint8_t out[4
     return ok;
 }
 
+static void apply_hl_override(lua_State *L, int hl_idx, const char *group, uint8_t out[4])
+{
+    lua_getfield(L, hl_idx, group);
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "fg");
+        if (lua_isstring(L, -1)) {
+            theme_parse_hex(lua_tostring(L, -1), out);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
 {
     if (!L || !th) return false;
@@ -179,19 +192,19 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
         lua_pop(L, 1);
     }
 
-    /* Populate Theme struct */
+    /* Populate Theme struct from base_30 defaults */
     memcpy(th->bg, black, 4);
     memcpy(th->fg, white, 4);
     memcpy(th->caret, nord_blue, 4);
     memcpy(th->selection, one_bg3, 4);
-    th->selection[3] = 200;
+    th->selection[3] = 120;
     memcpy(th->line_highlight, line, 4);
-    memcpy(th->gutter_bg, darker_black, 4);
+    memcpy(th->gutter_bg, black, 4); /* Match editor background like Neovim */
     memcpy(th->gutter_fg, grey_fg, 4);
     memcpy(th->bracket_match, nord_blue, 4);
     th->bracket_match[3] = 90;
 
-    /* Syntax mapping */
+    /* Syntax mapping from base_30 fallback */
     memcpy(th->syntax[HL_DEFAULT],  white, 4);
     memcpy(th->syntax[HL_KEYWORD],  purple, 4);
     memcpy(th->syntax[HL_TYPE],     yellow, 4);
@@ -204,9 +217,100 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->syntax[HL_CONSTANT], orange, 4);
     memcpy(th->syntax[HL_PROPERTY], red, 4);
 
+    /* If base_16 is provided, use standard Neovim / Tree-sitter palette */
+    lua_getfield(L, abs_idx, "base_16");
+    if (lua_istable(L, -1)) {
+        int b16 = lua_gettop(L);
+        uint8_t c[4];
+        if (get_table_hex(L, b16, "base00", c)) {
+            memcpy(th->bg, c, 4);
+            memcpy(th->gutter_bg, c, 4);
+            memcpy(th->tab_active_bg, c, 4);
+        }
+        if (get_table_hex(L, b16, "base01", c)) {
+            memcpy(th->line_highlight, c, 4);
+        }
+        if (get_table_hex(L, b16, "base02", c)) {
+            memcpy(th->selection, c, 4);
+            th->selection[3] = 120;
+        }
+        if (get_table_hex(L, b16, "base03", c)) {
+            memcpy(th->syntax[HL_COMMENT], c, 4);
+        }
+        if (get_table_hex(L, b16, "base04", c)) {
+            memcpy(th->gutter_fg, c, 4);
+        }
+        if (get_table_hex(L, b16, "base05", c)) {
+            memcpy(th->fg, c, 4);
+            memcpy(th->syntax[HL_DEFAULT], c, 4);
+            memcpy(th->syntax[HL_OPERATOR], c, 4);
+        }
+        if (get_table_hex(L, b16, "base08", c)) {
+            memcpy(th->syntax[HL_PREPROC], c, 4);
+            memcpy(th->syntax[HL_PROPERTY], c, 4);
+        }
+        if (get_table_hex(L, b16, "base09", c)) {
+            memcpy(th->syntax[HL_NUMBER], c, 4);
+            memcpy(th->syntax[HL_CONSTANT], c, 4);
+        }
+        if (get_table_hex(L, b16, "base0A", c)) {
+            memcpy(th->syntax[HL_TYPE], c, 4);
+        }
+        if (get_table_hex(L, b16, "base0B", c)) {
+            memcpy(th->syntax[HL_STRING], c, 4);
+        }
+        if (get_table_hex(L, b16, "base0C", c)) {
+            memcpy(th->syntax[HL_OPERATOR], c, 4);
+        }
+        if (get_table_hex(L, b16, "base0D", c)) {
+            memcpy(th->syntax[HL_FUNCTION], c, 4);
+            memcpy(th->caret, c, 4);
+        }
+        if (get_table_hex(L, b16, "base0E", c)) {
+            memcpy(th->syntax[HL_KEYWORD], c, 4);
+        }
+    }
+    lua_pop(L, 1); /* pop base_16 */
+
+    /* If polish_hl is provided, apply treesitter / highlight overrides */
+    lua_getfield(L, abs_idx, "polish_hl");
+    if (lua_istable(L, -1)) {
+        int phl = lua_gettop(L);
+        lua_getfield(L, phl, "treesitter");
+        if (lua_istable(L, -1)) {
+            int ts = lua_gettop(L);
+            apply_hl_override(L, ts, "@keyword", th->syntax[HL_KEYWORD]);
+            apply_hl_override(L, ts, "@keyword.return", th->syntax[HL_KEYWORD]);
+            apply_hl_override(L, ts, "@type", th->syntax[HL_TYPE]);
+            apply_hl_override(L, ts, "@function", th->syntax[HL_FUNCTION]);
+            apply_hl_override(L, ts, "@function.call", th->syntax[HL_FUNCTION]);
+            apply_hl_override(L, ts, "@string", th->syntax[HL_STRING]);
+            apply_hl_override(L, ts, "@number", th->syntax[HL_NUMBER]);
+            apply_hl_override(L, ts, "@comment", th->syntax[HL_COMMENT]);
+            apply_hl_override(L, ts, "@operator", th->syntax[HL_OPERATOR]);
+            apply_hl_override(L, ts, "@constant", th->syntax[HL_CONSTANT]);
+            apply_hl_override(L, ts, "@property", th->syntax[HL_PROPERTY]);
+            apply_hl_override(L, ts, "@variable", th->syntax[HL_DEFAULT]);
+        }
+        lua_pop(L, 1); /* pop treesitter */
+
+        lua_getfield(L, phl, "defaults");
+        if (lua_istable(L, -1)) {
+            int def = lua_gettop(L);
+            apply_hl_override(L, def, "Comment", th->syntax[HL_COMMENT]);
+            apply_hl_override(L, def, "String", th->syntax[HL_STRING]);
+            apply_hl_override(L, def, "Function", th->syntax[HL_FUNCTION]);
+            apply_hl_override(L, def, "Keyword", th->syntax[HL_KEYWORD]);
+            apply_hl_override(L, def, "Type", th->syntax[HL_TYPE]);
+            apply_hl_override(L, def, "Number", th->syntax[HL_NUMBER]);
+        }
+        lua_pop(L, 1); /* pop defaults */
+    }
+    lua_pop(L, 1); /* pop polish_hl */
+
     /* Tab bar */
     memcpy(th->tab_strip_bg, darker_black, 4);
-    memcpy(th->tab_active_bg, black, 4);
+    memcpy(th->tab_active_bg, th->bg, 4);
     memcpy(th->tab_inactive_bg, darker_black, 4);
     memcpy(th->tab_edge, line, 4);
     memcpy(th->tab_text_active, white, 4);
@@ -726,7 +830,7 @@ bool lua_bridge_init(void)
 
     luaL_openlibs(g_L);
 
-    /* Preload 'base46' module and mock Neovim's 'vim' table so NvChad themes load outside Neovim */
+    /* Preload 'base46' & 'nvconfig' modules and mock Neovim's 'vim' table so NvChad themes load outside Neovim */
     const char *base46_shim =
         "local base46 = {\n"
         "  override_theme = function(M, name)\n"
@@ -738,6 +842,28 @@ bool lua_bridge_init(void)
         "  toggle_theme = function() end,\n"
         "  load_all_highlights = function() end,\n"
         "}\n"
+        "local nvconfig = {\n"
+        "  base46 = {\n"
+        "    theme = 'onedark',\n"
+        "    transparency = false,\n"
+        "    hl_override = {},\n"
+        "    hl_add = {},\n"
+        "    integrations = {},\n"
+        "  },\n"
+        "  ui = {\n"
+        "    cmp = {},\n"
+        "    telescope = {},\n"
+        "    statusline = {},\n"
+        "    tabufline = {},\n"
+        "  },\n"
+        "}\n"
+        "setmetatable(nvconfig, {\n"
+        "  __index = function(t, k)\n"
+        "    local sub = {}\n"
+        "    setmetatable(sub, { __index = function() return {} end })\n"
+        "    return sub\n"
+        "  end\n"
+        "})\n"
         "package.preload['base46'] = function()\n"
         "  return base46\n"
         "end\n"
@@ -747,9 +873,17 @@ bool lua_bridge_init(void)
         "package.preload['base46.colors'] = function()\n"
         "  return {}\n"
         "end\n"
+        "package.preload['nvconfig'] = function()\n"
+        "  return nvconfig\n"
+        "end\n"
+        "package.preload['nvconfig.init'] = function()\n"
+        "  return nvconfig\n"
+        "end\n"
         "table.insert(package.searchers, 1, function(modname)\n"
         "  if modname == 'base46' or modname:sub(1, 7) == 'base46.' then\n"
         "    return function() return base46 end\n"
+        "  elseif modname == 'nvconfig' or modname:sub(1, 9) == 'nvconfig.' then\n"
+        "    return function() return nvconfig end\n"
         "  end\n"
         "  return nil\n"
         "end)\n"
@@ -764,7 +898,23 @@ bool lua_bridge_init(void)
         "      end\n"
         "      return res\n"
         "    end,\n"
-        "    g = {}\n"
+        "    tbl_extend = function(mode, ...)\n"
+        "      local res = {}\n"
+        "      for _, t in ipairs({...}) do\n"
+        "        if type(t) == 'table' then\n"
+        "          for k, v in pairs(t) do res[k] = v end\n"
+        "        end\n"
+        "      end\n"
+        "      return res\n"
+        "    end,\n"
+        "    g = {},\n"
+        "    o = {},\n"
+        "    opt = {},\n"
+        "    api = {\n"
+        "      nvim_create_autocmd = function() end,\n"
+        "      nvim_get_hl = function() return {} end,\n"
+        "      nvim_set_hl = function() end,\n"
+        "    }\n"
         "  }\n"
         "end\n";
     if (luaL_dostring(g_L, base46_shim) != LUA_OK) {

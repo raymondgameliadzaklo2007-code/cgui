@@ -54,9 +54,9 @@ void theme_set_builtin_onedark(Theme *th)
     set_color(th->bg, 36, 41, 51, 255);             /* #242933 black */
     set_color(th->fg, 171, 178, 191, 255);          /* #abb2bf white */
     set_color(th->caret, 97, 175, 239, 255);        /* #61afef nord_blue */
-    set_color(th->selection, 62, 68, 81, 200);      /* #3e4451 one_bg3 */
+    set_color(th->selection, 62, 68, 81, 120);      /* #3e4451 one_bg3 */
     set_color(th->line_highlight, 49, 53, 63, 255); /* #31353f line */
-    set_color(th->gutter_bg, 30, 34, 42, 255);      /* #1e222a darker_black */
+    set_color(th->gutter_bg, 36, 41, 51, 255);      /* match editor background */
     set_color(th->gutter_fg, 92, 99, 112, 255);     /* #5c6370 grey_fg */
     set_color(th->bracket_match, 97, 175, 239, 80);
 
@@ -112,9 +112,9 @@ void theme_set_builtin_light(Theme *th)
     set_color(th->bg, 252, 252, 252, 255);
     set_color(th->fg, 30, 30, 30, 255);
     set_color(th->caret, 0, 122, 255, 255);
-    set_color(th->selection, 180, 210, 255, 180);
+    set_color(th->selection, 180, 210, 255, 120);
     set_color(th->line_highlight, 240, 243, 248, 255);
-    set_color(th->gutter_bg, 245, 245, 247, 255);
+    set_color(th->gutter_bg, 252, 252, 252, 255);
     set_color(th->gutter_fg, 140, 140, 145, 255);
     set_color(th->bracket_match, 180, 215, 255, 175);
 

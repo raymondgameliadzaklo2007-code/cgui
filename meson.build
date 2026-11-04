@@ -26,6 +26,19 @@ tree_sitter_dep   = dependency('tree-sitter', required: true,
 tree_sitter_c_dep = dependency('tree-sitter-c', required: true,
                                fallback: ['tree-sitter-c', 'tree_sitter_c_dep'])
 
+# Lua 5.4 for configuration, user scripts, and NvChad themes
+lua_dep = dependency('lua54', 'lua-5.4', 'lua5.4', 'lua', required: false)
+if not lua_dep.found()
+  lua_sub = subproject('lua')
+  lua_dep = lua_sub.get_variable('lua_dep')
+endif
+
+# NvChad base46 themes via wrap
+base46_sub = subproject('base46', required: false)
+
+themes_dir = meson.current_source_dir() / 'subprojects' / 'base46' / 'lua' / 'base46' / 'themes'
+add_project_arguments('-DCGUI_DEFAULT_THEMES_PATH="@0@"'.format(themes_dir), language: 'c')
+
 glslang = find_program('glslangValidator', 'glslang', required: true)
 
 # Meson does not expose c23 as a built-in standard option yet.
@@ -77,6 +90,8 @@ sources = files(
   'src/editor.c',
   'src/highlight.c',
   'src/icon.c',
+  'src/theme.c',
+  'src/lua_bridge.c',
 )
 
 executable(
@@ -94,6 +109,7 @@ executable(
     librsvg_dep,
     tree_sitter_dep,
     tree_sitter_c_dep,
+    lua_dep,
   ],
   install: false,
 )

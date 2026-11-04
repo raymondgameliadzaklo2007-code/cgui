@@ -9,6 +9,7 @@
 #include <SDL3/SDL_messagebox.h>
 
 #include "tab_bar.h"
+#include "theme.h"
 
 Editor *app_ed(App *app)
 {
@@ -129,12 +130,13 @@ void draw_tab_bar(App *app, VkContext *ctx)
     float w = (float)ctx->swapchain_extent.width;
     const float bar_h = 28.0f;
 
-    uint8_t strip[4]   = { 232, 232, 232, 255 };
-    uint8_t content[4] = { 252, 252, 252, 255 };
-    uint8_t rule[4]    = { 198, 198, 198, 255 };
-    uint8_t bottom[4]  = { 180, 180, 180, 255 };
-    uint8_t text_act[4]= { 0, 0, 0, 255 };
-    uint8_t text_in[4] = { 96, 96, 96, 255 };
+    const Theme *th = theme_current();
+    const uint8_t *strip   = th->tab_strip_bg;
+    const uint8_t *content = th->tab_active_bg;
+    const uint8_t *rule    = th->tab_edge;
+    const uint8_t *bottom  = th->tab_edge;
+    const uint8_t *text_act= th->tab_text_active;
+    const uint8_t *text_in = th->tab_text_inactive;
     vk_draw_rounded_rect(&app->draw, 0, 0, w, bar_h, 0.0f, 1.0f, strip);
     vk_draw_rounded_rect(&app->draw, 0, bar_h - 1.0f, w, 1.0f, 0.0f, 1.0f, bottom);
 

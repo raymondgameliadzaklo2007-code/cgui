@@ -5,6 +5,7 @@
 #include "editor.h"
 #include "vk_draw.h"
 #include "highlight.h"
+#include "theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -677,6 +678,15 @@ static void ensure_caret_visible(Editor *ed)
 /* Public lifecycle                                                    */
 /* ------------------------------------------------------------------ */
 
+void editor_apply_theme(Editor *ed, const Theme *th)
+{
+    if (!ed || !th) return;
+    memcpy(ed->text_color, th->fg, 4);
+    memcpy(ed->caret_color, th->caret, 4);
+    memcpy(ed->sel_color, th->selection, 4);
+    memcpy(ed->bg, th->bg, 4);
+}
+
 bool editor_create(Editor *ed, Font *font, const char *initial)
 {
     memset(ed, 0, sizeof(*ed));
@@ -687,10 +697,7 @@ bool editor_create(Editor *ed, Font *font, const char *initial)
     ed->gutter_w = 48.0f;
     ed->line_height = font ? font->line_height : 18.0f;
 
-    ed->text_color[0] = 30;  ed->text_color[1] = 30;  ed->text_color[2] = 30;  ed->text_color[3] = 255;
-    ed->caret_color[0] = 0;  ed->caret_color[1] = 122; ed->caret_color[2] = 255; ed->caret_color[3] = 255;
-    ed->sel_color[0] = 180;  ed->sel_color[1] = 210; ed->sel_color[2] = 255; ed->sel_color[3] = 180;
-    ed->bg[0] = 252; ed->bg[1] = 252; ed->bg[2] = 252; ed->bg[3] = 255;
+    editor_apply_theme(ed, theme_current());
 
     const char *init = initial ? initial : "";
     size_t n = strlen(init);
@@ -2122,9 +2129,9 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
 
                     /* Feature: Current line highlight */
                     if (line_no == cur_line && g_editor_draw) {
-                        uint8_t cur_line_bg[4] = { 243, 245, 250, 255 };
+                        const Theme *th = theme_current();
                         vk_draw_rounded_rect(g_editor_draw, x + gutter, line_y - ed->font->ascent,
-                                             w - gutter, ed->line_height, 0.0f, 1.0f, cur_line_bg);
+                                             w - gutter, ed->line_height, 0.0f, 1.0f, th->line_highlight);
                     }
 
                     /* Feature: Indent guides (drawn on enclosing scopes: col 0, 4, 8... strictly before text) */
@@ -2188,7 +2195,8 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
 
                     /* Feature: Matching bracket highlight */
                     if (g_editor_draw && b1 != (size_t)-1 && b2 != (size_t)-1) {
-                        uint8_t bracket_bg[4] = { 180, 215, 255, 175 };
+                        const Theme *th = theme_current();
+                        const uint8_t *bracket_bg = th->bracket_match;
                         if (b1 >= r_start && b1 < r_end) {
                             float bx = text_left;
                             for (size_t k = r_start; k < b1; ++k)
@@ -2281,9 +2289,10 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
 
     /* Gutter background & line numbers: occludes any horizontally scrolled text */
     if (ed->show_line_numbers && gutter > 0.0f) {
+        const Theme *th = theme_current();
         if (g_editor_draw) {
             /* Gutter background */
-            vk_draw_rounded_rect(g_editor_draw, x, y, gutter, h, 0.0f, 1.0f, ed->bg);
+            vk_draw_rounded_rect(g_editor_draw, x, y, gutter, h, 0.0f, 1.0f, th->gutter_bg);
         }
         if (ed->font) {
             for (int v = 0; v < num_vis_lines; ++v) {
@@ -2291,13 +2300,17 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                     char num[16];
                     snprintf(num, sizeof(num), "%d", vis_lines[v].line_no);
                     float nw = font_measure(ed->font, num);
-                    uint8_t num_c[4] = { 160, 160, 165, 255 };
+                    uint8_t num_c[4];
                     if (vis_lines[v].is_cur) {
-                        num_c[0] = 30; num_c[1] = 30; num_c[2] = 35; num_c[3] = 255;
+                        memcpy(num_c, th->fg, 4);
+                    } else {
+                        memcpy(num_c, th->gutter_fg, 4);
                     }
                     font_draw(ed->font, ctx, x + gutter - nw - 8.0f, vis_lines[v].y, num, num_c);
                 } else {
-                    uint8_t wrap_dot[4] = { 190, 190, 195, 200 };
+                    uint8_t wrap_dot[4];
+                    memcpy(wrap_dot, th->gutter_fg, 4);
+                    wrap_dot[3] = 160;
                     font_draw(ed->font, ctx, x + gutter - 12.0f, vis_lines[v].y, "·", wrap_dot);
                 }
             }

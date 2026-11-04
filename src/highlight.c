@@ -3,6 +3,7 @@
  */
 
 #include "highlight.h"
+#include "theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -396,19 +397,7 @@ HlKind highlight_kind_at(const Highlighter *hl, size_t offset)
 
 void highlight_color(HlKind kind, uint8_t out[4])
 {
-    switch (kind) {
-    case HL_KEYWORD:   out[0]=170; out[1]=13;  out[2]=145; out[3]=255; break;
-    case HL_TYPE:      out[0]=0;   out[1]=116; out[2]=189; out[3]=255; break;
-    case HL_FUNCTION:  out[0]=50;  out[1]=100; out[2]=180; out[3]=255; break;
-    case HL_STRING:    out[0]=196; out[1]=26;  out[2]=22;  out[3]=255; break;
-    case HL_NUMBER:    out[0]=28;  out[1]=0;   out[2]=207; out[3]=255; break;
-    case HL_COMMENT:   out[0]=80;  out[1]=140; out[2]=90;  out[3]=255; break;
-    case HL_PREPROC:   out[0]=100; out[1]=56;  out[2]=32;  out[3]=255; break;
-    case HL_OPERATOR:  out[0]=50;  out[1]=50;  out[2]=50;  out[3]=255; break;
-    case HL_CONSTANT:  out[0]=28;  out[1]=0;   out[2]=207; out[3]=255; break;
-    case HL_PROPERTY:  out[0]=50;  out[1]=120; out[2]=100; out[3]=255; break;
-    default:           out[0]=30;  out[1]=30;  out[2]=30;  out[3]=255; break;
-    }
+    theme_color_syntax(kind, out);
 }
 
 bool highlight_find_matching_bracket(const Highlighter *hl, size_t pos, size_t *out_match)

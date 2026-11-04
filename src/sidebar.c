@@ -14,6 +14,7 @@
 #include "sidebar.h"
 #include "tab_bar.h"
 #include "project_icons.h"
+#include "theme.h"
 
 typedef struct ProjectScan {
     ProjectEntry *entries;
@@ -344,14 +345,15 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
 {
     float bottom = window_h - status_h;
     float sidebar_w = PROJECT_SIDEBAR_WIDTH;
-    uint8_t panel[4] = { 249, 249, 250, 255 };
-    uint8_t edge[4] = { 218, 219, 222, 255 };
-    uint8_t heading[4] = { 105, 107, 112, 255 };
-    uint8_t text[4] = { 54, 55, 59, 255 };
-    uint8_t muted[4] = { 125, 127, 132, 255 };
-    uint8_t selected[4] = { 61, 133, 220, 32 };
-    uint8_t hover[4] = { 70, 75, 84, 16 };
-    uint8_t active_text[4] = { 31, 94, 164, 255 };
+    const Theme *th = theme_current();
+    const uint8_t *panel    = th->sidebar_bg;
+    const uint8_t *edge     = th->sidebar_edge;
+    const uint8_t *heading  = th->sidebar_heading;
+    const uint8_t *text     = th->sidebar_text;
+    const uint8_t *muted    = th->sidebar_muted;
+    const uint8_t *selected = th->sidebar_selected;
+    const uint8_t *hover    = th->sidebar_hover;
+    const uint8_t *active_text = th->caret;
     float mouse_x, mouse_y;
     SDL_GetMouseState(&mouse_x, &mouse_y);
 

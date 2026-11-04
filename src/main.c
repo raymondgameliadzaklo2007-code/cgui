@@ -23,15 +23,18 @@
 #include "sidebar.h"
 #include "find_bar.h"
 #include "palette.h"
+#include "theme.h"
+#include "lua_bridge.h"
 
 static void draw_status_bar(App *app, VkContext *ctx)
 {
     float w = (float)ctx->swapchain_extent.width;
     float h = (float)ctx->swapchain_extent.height;
     const float bar_h = 26.0f;
-    uint8_t bg[4]   = { 246, 246, 248, 255 };
-    uint8_t edge[4] = { 210, 210, 215, 255 };
-    uint8_t text[4] = { 90, 90, 98, 255 };
+    const Theme *th = theme_current();
+    const uint8_t *bg   = th->status_bg;
+    const uint8_t *edge = th->status_edge;
+    const uint8_t *text = th->status_fg;
 
     float y = h - bar_h;
     vk_draw_rounded_rect(&app->draw, 0, y, w, bar_h, 0.0f, 1.0f, bg);
@@ -468,6 +471,10 @@ int main(int argc, char **argv)
         }
     }
 
+    theme_init();
+    lua_bridge_init();
+    lua_bridge_load_user_config();
+
     editor_set_draw_context(&app.draw);
     const char *starter =
         "// cgui editor\n"
@@ -801,6 +808,7 @@ int main(int argc, char **argv)
     free(app.text_frag);
     vk_draw_destroy(&app.draw);
     vk_context_destroy(&app.vk);
+    lua_bridge_destroy();
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;

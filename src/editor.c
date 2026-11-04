@@ -2284,9 +2284,6 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
         if (g_editor_draw) {
             /* Gutter background */
             vk_draw_rounded_rect(g_editor_draw, x, y, gutter, h, 0.0f, 1.0f, ed->bg);
-            /* 1px subtle separator */
-            uint8_t sep_c[4] = { 228, 230, 235, 255 };
-            vk_draw_rounded_rect(g_editor_draw, x + gutter - 1.0f, y, 1.0f, h, 0.0f, 1.0f, sep_c);
         }
         if (ed->font) {
             for (int v = 0; v < num_vis_lines; ++v) {

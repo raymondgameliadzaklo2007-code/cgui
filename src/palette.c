@@ -1,15 +1,10 @@
-/**
- * palette.c – command palette (Ctrl+Shift+P)
- *
- * The command list itself (app_commands) lives in main.c next to the
- * commands it runs.
- */
-
 #include <stdbool.h>
 
 #include <SDL3/SDL.h>
 
 #include "palette.h"
+#include "lua_bridge.h"
+#include "theme.h"
 
 static char ascii_lower(char c)
 {
@@ -41,11 +36,13 @@ static void palette_filter(App *app)
 {
     int scores[PALETTE_MAX_MATCHES];
     app->palette_match_count = 0;
-    for (int i = 0; i < app_command_count; ++i) {
-        int s = fuzzy_score(app->palette_query, app_commands[i].label);
+    int total_cmds = app_command_count + g_dynamic_command_count;
+    for (int i = 0; i < total_cmds; ++i) {
+        const char *label = (i < app_command_count)
+                            ? app_commands[i].label
+                            : g_dynamic_commands[i - app_command_count].label;
+        int s = fuzzy_score(app->palette_query, label);
         if (s < 0) continue;
-        /* insertion sort by score desc, stable for ties; when the list is
-         * full the weakest match is dropped */
         int at = app->palette_match_count;
         if (at == PALETTE_MAX_MATCHES) {
             if (scores[at - 1] >= s) continue;
@@ -77,9 +74,13 @@ void palette_show(App *app)
 static void palette_run_selected(App *app)
 {
     if (app->palette_sel < 0 || app->palette_sel >= app->palette_match_count) return;
-    const Command *cmd = &app_commands[app->palette_matches[app->palette_sel]];
+    int idx = app->palette_matches[app->palette_sel];
     app->palette_open = false;
-    cmd->run(app);
+    if (idx < app_command_count) {
+        app_commands[idx].run(app);
+    } else {
+        lua_bridge_execute_command(app, idx - app_command_count);
+    }
 }
 
 typedef struct PaletteLayout {
@@ -112,20 +113,21 @@ static PaletteLayout palette_layout(const App *app)
 
 void draw_palette(App *app, VkContext *ctx)
 {
-    PaletteLayout l = palette_layout(app);
-    uint8_t scrim[4]    = { 20, 22, 26, 40 };
-    uint8_t border[4]   = { 205, 207, 212, 255 };
-    uint8_t panel[4]    = { 252, 252, 253, 255 };
-    uint8_t divider[4]  = { 228, 229, 232, 255 };
-    uint8_t text_c[4]   = { 36, 37, 41, 255 };
-    uint8_t dim[4]      = { 128, 130, 136, 255 };
-    uint8_t sel_bg[4]   = { 61, 133, 220, 34 };
-    uint8_t hover_bg[4] = { 70, 75, 84, 14 };
-    uint8_t accent[4]   = { 31, 94, 164, 255 };
-    uint8_t key_bg[4]   = { 70, 75, 84, 18 };
+    const Theme *th = theme_current();
+    uint8_t scrim[4]    = { 20, 22, 26, 60 };
+    const uint8_t *border  = th->overlay_edge;
+    const uint8_t *panel   = th->overlay_bg;
+    const uint8_t *divider = th->line_highlight;
+    const uint8_t *text_c  = th->fg;
+    const uint8_t *dim     = th->gutter_fg;
+    const uint8_t *sel_bg  = th->overlay_sel;
+    uint8_t hover_bg[4] = { 70, 75, 84, 18 };
+    const uint8_t *accent  = th->caret;
+    uint8_t key_bg[4]   = { 70, 75, 84, 24 };
 
     float ww = (float)ctx->swapchain_extent.width;
     float wh = (float)ctx->swapchain_extent.height;
+    PaletteLayout l = palette_layout(app);
     vk_draw_rounded_rect(&app->draw, 0, 0, ww, wh, 0.0f, 1.0f, scrim);
     vk_draw_rounded_rect(&app->draw, l.x - 1, l.y - 1, l.w + 2, l.h + 2, 9.0f, 1.0f, border);
     vk_draw_rounded_rect(&app->draw, l.x, l.y, l.w, l.h, 8.0f, 1.0f, panel);
@@ -157,7 +159,13 @@ void draw_palette(App *app, VkContext *ctx)
     for (int row = 0; row < l.visible; ++row) {
         int idx = app->palette_scroll + row;
         if (idx >= app->palette_match_count) break;
-        const Command *cmd = &app_commands[app->palette_matches[idx]];
+        int cmd_idx = app->palette_matches[idx];
+        const char *label = (cmd_idx < app_command_count)
+                            ? app_commands[cmd_idx].label
+                            : g_dynamic_commands[cmd_idx - app_command_count].label;
+        const char *shortcut = (cmd_idx < app_command_count)
+                               ? app_commands[cmd_idx].shortcut
+                               : g_dynamic_commands[cmd_idx - app_command_count].shortcut;
         float ry = l.list_top + row * l.row_h;
         bool hovered = mouse_x >= l.x && mouse_x < l.x + l.w &&
                        mouse_y >= ry && mouse_y < ry + l.row_h;
@@ -169,13 +177,15 @@ void draw_palette(App *app, VkContext *ctx)
                                  5.0f, 1.0f, hover_bg);
 
         float baseline = ry + (l.row_h + app->font.ascent + app->font.descent) * 0.5f;
-        font_draw(&app->font, ctx, l.x + 14.0f, baseline, cmd->label, text_c);
+        font_draw(&app->font, ctx, l.x + 14.0f, baseline, label, text_c);
 
-        float kw = font_measure(&app->font, cmd->shortcut);
-        float kx = l.x + l.w - 14.0f - kw;
-        vk_draw_rounded_rect(&app->draw, kx - 6.0f, ry + 4.0f, kw + 12.0f,
-                             l.row_h - 8.0f, 4.0f, 1.0f, key_bg);
-        font_draw(&app->font, ctx, kx, baseline, cmd->shortcut, dim);
+        if (shortcut && shortcut[0]) {
+            float kw = font_measure(&app->font, shortcut);
+            float kx = l.x + l.w - 14.0f - kw;
+            vk_draw_rounded_rect(&app->draw, kx - 6.0f, ry + 4.0f, kw + 12.0f,
+                                 l.row_h - 8.0f, 4.0f, 1.0f, key_bg);
+            font_draw(&app->font, ctx, kx, baseline, shortcut, dim);
+        }
     }
 }
 

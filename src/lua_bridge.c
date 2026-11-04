@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -13,7 +14,30 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include <SDL3/SDL.h>
+#include "app.h"
+
 static lua_State *g_L = NULL;
+static App *g_app = NULL;
+
+DynamicCommand g_dynamic_commands[MAX_DYNAMIC_COMMANDS];
+int g_dynamic_command_count = 0;
+
+typedef struct KeyBinding {
+    SDL_Keycode key;
+    SDL_Keymod  mod;
+    char command_id[64];
+    int  lua_fn_ref;
+} KeyBinding;
+
+#define MAX_KEYBINDINGS 64
+static KeyBinding g_keybindings[MAX_KEYBINDINGS];
+static int g_keybinding_count = 0;
+
+void lua_bridge_set_app(App *app)
+{
+    g_app = app;
+}
 
 static int error_handler(lua_State *L)
 {
@@ -283,7 +307,6 @@ bool lua_bridge_set_theme(const char *name)
 
     if (ok) {
         g_theme = loaded;
-        printf("[cgui-theme] Applied theme: %s\n", name);
         return true;
     }
 
@@ -294,6 +317,11 @@ bool lua_bridge_set_theme(const char *name)
 static int lua_cgui_theme_set(lua_State *L)
 {
     const char *name = luaL_checkstring(L, 1);
+    if (g_app) {
+        cgui_apply_theme_all(g_app, name);
+        lua_pushboolean(L, true);
+        return 1;
+    }
     bool ok = lua_bridge_set_theme(name);
     lua_pushboolean(L, ok);
     return 1;
@@ -301,6 +329,19 @@ static int lua_cgui_theme_set(lua_State *L)
 
 static int lua_cgui_theme_get(lua_State *L)
 {
+    lua_pushstring(L, g_theme.name);
+    return 1;
+}
+
+static int lua_cgui_theme_toggle(lua_State *L)
+{
+    if (g_theme.is_dark) {
+        if (g_app) cgui_apply_theme_all(g_app, "light");
+        else lua_bridge_set_theme("light");
+    } else {
+        if (g_app) cgui_apply_theme_all(g_app, "onedark");
+        else lua_bridge_set_theme("onedark");
+    }
     lua_pushstring(L, g_theme.name);
     return 1;
 }
@@ -387,6 +428,284 @@ static int lua_cgui_theme_list(lua_State *L)
     return 1;
 }
 
+/* ---------------------------------------------------------------- *
+ * Shortcut Parsing, Commands & Keymap Registry                     *
+ * ---------------------------------------------------------------- */
+
+static bool parse_shortcut(const char *str, SDL_Keycode *out_key, SDL_Keymod *out_mod)
+{
+    if (!str || !out_key || !out_mod) return false;
+    *out_key = SDLK_UNKNOWN;
+    *out_mod = SDL_KMOD_NONE;
+
+    char buf[128];
+    strncpy(buf, str, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+
+    char *saveptr = NULL;
+    char *token = strtok_r(buf, "+-", &saveptr);
+    while (token) {
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && *end == ' ') { *end = 0; end--; }
+
+        if (strcasecmp(token, "Ctrl") == 0 || strcasecmp(token, "Control") == 0) {
+            *out_mod |= SDL_KMOD_CTRL;
+        } else if (strcasecmp(token, "Shift") == 0) {
+            *out_mod |= SDL_KMOD_SHIFT;
+        } else if (strcasecmp(token, "Alt") == 0) {
+            *out_mod |= SDL_KMOD_ALT;
+        } else if (strcasecmp(token, "GUI") == 0 || strcasecmp(token, "Super") == 0 || strcasecmp(token, "Cmd") == 0) {
+            *out_mod |= SDL_KMOD_GUI;
+        } else {
+            if (strlen(token) == 1) {
+                char c = token[0];
+                if (c >= 'a' && c <= 'z') *out_key = (SDL_Keycode)('a' + (c - 'a'));
+                else if (c >= 'A' && c <= 'Z') *out_key = (SDL_Keycode)('a' + (c - 'A'));
+                else if (c >= '0' && c <= '9') *out_key = (SDL_Keycode)('0' + (c - '0'));
+                else if (c == '=') *out_key = SDLK_EQUALS;
+                else if (c == '-') *out_key = SDLK_MINUS;
+                else if (c == '[') *out_key = SDLK_LEFTBRACKET;
+                else if (c == ']') *out_key = SDLK_RIGHTBRACKET;
+            } else if (strcasecmp(token, "F1") == 0) *out_key = SDLK_F1;
+            else if (strcasecmp(token, "F2") == 0) *out_key = SDLK_F2;
+            else if (strcasecmp(token, "F3") == 0) *out_key = SDLK_F3;
+            else if (strcasecmp(token, "F4") == 0) *out_key = SDLK_F4;
+            else if (strcasecmp(token, "F5") == 0) *out_key = SDLK_F5;
+            else if (strcasecmp(token, "F6") == 0) *out_key = SDLK_F6;
+            else if (strcasecmp(token, "F7") == 0) *out_key = SDLK_F7;
+            else if (strcasecmp(token, "F8") == 0) *out_key = SDLK_F8;
+            else if (strcasecmp(token, "F9") == 0) *out_key = SDLK_F9;
+            else if (strcasecmp(token, "F10") == 0) *out_key = SDLK_F10;
+            else if (strcasecmp(token, "F11") == 0) *out_key = SDLK_F11;
+            else if (strcasecmp(token, "F12") == 0) *out_key = SDLK_F12;
+            else if (strcasecmp(token, "Tab") == 0) *out_key = SDLK_TAB;
+            else if (strcasecmp(token, "Return") == 0 || strcasecmp(token, "Enter") == 0) *out_key = SDLK_RETURN;
+            else if (strcasecmp(token, "Space") == 0) *out_key = SDLK_SPACE;
+            else if (strcasecmp(token, "Escape") == 0 || strcasecmp(token, "Esc") == 0) *out_key = SDLK_ESCAPE;
+            else if (strcasecmp(token, "Backspace") == 0) *out_key = SDLK_BACKSPACE;
+            else if (strcasecmp(token, "Delete") == 0 || strcasecmp(token, "Del") == 0) *out_key = SDLK_DELETE;
+        }
+        token = strtok_r(NULL, "+-", &saveptr);
+    }
+    return (*out_key != SDLK_UNKNOWN);
+}
+
+static int lua_cgui_commands_register(lua_State *L)
+{
+    const char *id = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    const char *label = lua_isstring(L, 3) ? lua_tostring(L, 3) : id;
+    const char *shortcut = lua_isstring(L, 4) ? lua_tostring(L, 4) : "";
+
+    for (int i = 0; i < g_dynamic_command_count; ++i) {
+        if (strcmp(g_dynamic_commands[i].id, id) == 0) {
+            if (g_dynamic_commands[i].lua_fn_ref != LUA_NOREF) {
+                luaL_unref(L, LUA_REGISTRYINDEX, g_dynamic_commands[i].lua_fn_ref);
+            }
+            lua_pushvalue(L, 2);
+            g_dynamic_commands[i].lua_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            strncpy(g_dynamic_commands[i].label, label, sizeof(g_dynamic_commands[i].label) - 1);
+            strncpy(g_dynamic_commands[i].shortcut, shortcut, sizeof(g_dynamic_commands[i].shortcut) - 1);
+            return 0;
+        }
+    }
+
+    if (g_dynamic_command_count >= MAX_DYNAMIC_COMMANDS) {
+        return luaL_error(L, "Maximum dynamic commands (%d) reached", MAX_DYNAMIC_COMMANDS);
+    }
+
+    DynamicCommand *cmd = &g_dynamic_commands[g_dynamic_command_count++];
+    strncpy(cmd->id, id, sizeof(cmd->id) - 1);
+    strncpy(cmd->label, label, sizeof(cmd->label) - 1);
+    strncpy(cmd->shortcut, shortcut, sizeof(cmd->shortcut) - 1);
+
+    lua_pushvalue(L, 2);
+    cmd->lua_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    if (shortcut[0]) {
+        SDL_Keycode k;
+        SDL_Keymod m;
+        if (parse_shortcut(shortcut, &k, &m) && g_keybinding_count < MAX_KEYBINDINGS) {
+            KeyBinding *kb = &g_keybindings[g_keybinding_count++];
+            kb->key = k;
+            kb->mod = m;
+            strncpy(kb->command_id, id, sizeof(kb->command_id) - 1);
+            kb->lua_fn_ref = LUA_NOREF;
+        }
+    }
+
+    return 0;
+}
+
+static int lua_cgui_commands_execute(lua_State *L)
+{
+    const char *id = luaL_checkstring(L, 1);
+    bool ok = lua_bridge_execute_command_id(g_app, id);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+static int lua_cgui_keymap_bind(lua_State *L)
+{
+    const char *shortcut = luaL_checkstring(L, 1);
+    SDL_Keycode k;
+    SDL_Keymod m;
+    if (!parse_shortcut(shortcut, &k, &m)) {
+        return luaL_error(L, "Invalid shortcut format: %s", shortcut);
+    }
+
+    if (g_keybinding_count >= MAX_KEYBINDINGS) {
+        return luaL_error(L, "Maximum keybindings (%d) reached", MAX_KEYBINDINGS);
+    }
+
+    KeyBinding *kb = &g_keybindings[g_keybinding_count++];
+    kb->key = k;
+    kb->mod = m;
+    kb->lua_fn_ref = LUA_NOREF;
+    kb->command_id[0] = 0;
+
+    if (lua_isstring(L, 2)) {
+        strncpy(kb->command_id, lua_tostring(L, 2), sizeof(kb->command_id) - 1);
+    } else if (lua_isfunction(L, 2)) {
+        lua_pushvalue(L, 2);
+        kb->lua_fn_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        return luaL_error(L, "Argument 2 to bind must be command string or function");
+    }
+
+    return 0;
+}
+
+bool lua_bridge_execute_command(App *app, int index)
+{
+    (void)app;
+    if (!g_L || index < 0 || index >= g_dynamic_command_count) return false;
+    DynamicCommand *cmd = &g_dynamic_commands[index];
+    if (cmd->lua_fn_ref == LUA_NOREF) return false;
+
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, cmd->lua_fn_ref);
+    return lua_bridge_pcall(g_L, 0, 0);
+}
+
+bool lua_bridge_execute_command_id(App *app, const char *id)
+{
+    if (!id) return false;
+
+    if (strcmp(id, "theme:toggle") == 0 || strcmp(id, "theme:toggle_dark_light") == 0) {
+        if (g_theme.is_dark) {
+            cgui_apply_theme_all(app, "light");
+        } else {
+            cgui_apply_theme_all(app, "onedark");
+        }
+        return true;
+    }
+    if (strcmp(id, "theme:picker") == 0 || strcmp(id, "theme:select") == 0) {
+        if (app) theme_picker_open(app);
+        return true;
+    }
+    if (strcmp(id, "palette:open") == 0) {
+        if (app) palette_show(app);
+        return true;
+    }
+    if (strcmp(id, "file:new") == 0) {
+        if (app) tab_add(app, NULL, "");
+        return true;
+    }
+    if (strcmp(id, "file:open") == 0) {
+        /* Open file dialog */
+        return true;
+    }
+
+    for (int i = 0; i < g_dynamic_command_count; ++i) {
+        if (strcmp(g_dynamic_commands[i].id, id) == 0) {
+            return lua_bridge_execute_command(app, i);
+        }
+    }
+
+    fprintf(stderr, "[cgui-commands] Unknown command '%s'\n", id);
+    return false;
+}
+
+bool lua_bridge_handle_key(App *app, unsigned int key, unsigned int mod)
+{
+    for (int i = 0; i < g_keybinding_count; ++i) {
+        KeyBinding *kb = &g_keybindings[i];
+        if (kb->key == (SDL_Keycode)key) {
+            bool ctrl_match = ((kb->mod & SDL_KMOD_CTRL) != 0) == ((mod & SDL_KMOD_CTRL) != 0);
+            bool shift_match = ((kb->mod & SDL_KMOD_SHIFT) != 0) == ((mod & SDL_KMOD_SHIFT) != 0);
+            bool alt_match = ((kb->mod & SDL_KMOD_ALT) != 0) == ((mod & SDL_KMOD_ALT) != 0);
+            if (ctrl_match && shift_match && alt_match) {
+                if (kb->lua_fn_ref != LUA_NOREF && g_L) {
+                    lua_rawgeti(g_L, LUA_REGISTRYINDEX, kb->lua_fn_ref);
+                    lua_bridge_pcall(g_L, 0, 0);
+                    return true;
+                } else if (kb->command_id[0]) {
+                    return lua_bridge_execute_command_id(app, kb->command_id);
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool lua_bridge_apply_config(App *app)
+{
+    if (!g_L) return false;
+    lua_getglobal(g_L, "cgui");
+    if (!lua_istable(g_L, -1)) {
+        lua_pop(g_L, 1);
+        return false;
+    }
+
+    lua_getfield(g_L, -1, "config");
+    if (!lua_istable(g_L, -1)) {
+        lua_pop(g_L, 2);
+        return false;
+    }
+
+    /* theme */
+    lua_getfield(g_L, -1, "theme");
+    if (lua_isstring(g_L, -1)) {
+        const char *th = lua_tostring(g_L, -1);
+        if (app) cgui_apply_theme_all(app, th);
+        else lua_bridge_set_theme(th);
+    }
+    lua_pop(g_L, 1);
+
+    /* font_size */
+    lua_getfield(g_L, -1, "font_size");
+    if (lua_isnumber(g_L, -1) && app) {
+        float sz = (float)lua_tonumber(g_L, -1);
+        if (sz >= 8.0f && sz <= 48.0f) {
+            app->font_size = sz;
+        }
+    }
+    lua_pop(g_L, 1);
+
+    /* soft_wrap */
+    lua_getfield(g_L, -1, "soft_wrap");
+    if (lua_isboolean(g_L, -1) && app) {
+        bool sw = lua_toboolean(g_L, -1);
+        app->soft_wrap = sw;
+        for (int i = 0; i < app->tab_count; ++i)
+            app->tabs[i].soft_wrap = sw;
+    }
+    lua_pop(g_L, 1);
+
+    /* line_numbers */
+    lua_getfield(g_L, -1, "line_numbers");
+    if (lua_isboolean(g_L, -1) && app) {
+        bool ln = lua_toboolean(g_L, -1);
+        for (int i = 0; i < app->tab_count; ++i)
+            app->tabs[i].show_line_numbers = ln;
+    }
+    lua_pop(g_L, 1);
+
+    lua_pop(g_L, 2); /* pop config, cgui */
+    return true;
+}
+
 bool lua_bridge_init(void)
 {
     if (g_L) return true;
@@ -414,12 +733,36 @@ bool lua_bridge_init(void)
     lua_setfield(g_L, -2, "get");
     lua_pushcfunction(g_L, lua_cgui_theme_list);
     lua_setfield(g_L, -2, "list");
+    lua_pushcfunction(g_L, lua_cgui_theme_toggle);
+    lua_setfield(g_L, -2, "toggle");
     lua_setfield(g_L, -2, "theme");
+
+    /* cgui.commands */
+    lua_newtable(g_L);
+    lua_pushcfunction(g_L, lua_cgui_commands_register);
+    lua_setfield(g_L, -2, "register");
+    lua_pushcfunction(g_L, lua_cgui_commands_execute);
+    lua_setfield(g_L, -2, "execute");
+    lua_setfield(g_L, -2, "commands");
+
+    /* cgui.keymap */
+    lua_newtable(g_L);
+    lua_pushcfunction(g_L, lua_cgui_keymap_bind);
+    lua_setfield(g_L, -2, "bind");
+    lua_pushcfunction(g_L, lua_cgui_keymap_bind);
+    lua_setfield(g_L, -2, "set");
+    lua_setfield(g_L, -2, "keymap");
 
     /* cgui.config table */
     lua_newtable(g_L);
     lua_pushstring(g_L, "onedark");
     lua_setfield(g_L, -2, "theme");
+    lua_pushnumber(g_L, 15.0);
+    lua_setfield(g_L, -2, "font_size");
+    lua_pushboolean(g_L, false);
+    lua_setfield(g_L, -2, "soft_wrap");
+    lua_pushboolean(g_L, true);
+    lua_setfield(g_L, -2, "line_numbers");
     lua_setfield(g_L, -2, "config");
 
     lua_setglobal(g_L, "cgui");
@@ -430,6 +773,18 @@ bool lua_bridge_init(void)
 void lua_bridge_destroy(void)
 {
     if (g_L) {
+        for (int i = 0; i < g_dynamic_command_count; ++i) {
+            if (g_dynamic_commands[i].lua_fn_ref != LUA_NOREF) {
+                luaL_unref(g_L, LUA_REGISTRYINDEX, g_dynamic_commands[i].lua_fn_ref);
+                g_dynamic_commands[i].lua_fn_ref = LUA_NOREF;
+            }
+        }
+        for (int i = 0; i < g_keybinding_count; ++i) {
+            if (g_keybindings[i].lua_fn_ref != LUA_NOREF) {
+                luaL_unref(g_L, LUA_REGISTRYINDEX, g_keybindings[i].lua_fn_ref);
+                g_keybindings[i].lua_fn_ref = LUA_NOREF;
+            }
+        }
         lua_close(g_L);
         g_L = NULL;
     }
@@ -452,7 +807,7 @@ bool lua_bridge_load_user_config(void)
 
     struct stat st;
     if (stat(config_path, &st) != 0) {
-        return false; /* No user init.lua, normal */
+        return false;
     }
 
     printf("[cgui-lua] Loading user config from %s\n", config_path);

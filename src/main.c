@@ -268,6 +268,183 @@ void close_overlays(App *app)
     app->goto_open = false;
     app->picker_open = false;
     app->palette_open = false;
+    app->theme_picker_open = false;
+}
+
+void cgui_apply_theme_all(App *app, const char *theme_name)
+{
+    if (theme_name && theme_name[0]) {
+        lua_bridge_set_theme(theme_name);
+    }
+    const Theme *th = theme_current();
+    app->vk.clear_color[0] = th->bg[0] / 255.0f;
+    app->vk.clear_color[1] = th->bg[1] / 255.0f;
+    app->vk.clear_color[2] = th->bg[2] / 255.0f;
+    app->vk.clear_color[3] = 1.0f;
+
+    const uint8_t text_bg[3] = { th->bg[0], th->bg[1], th->bg[2] };
+    font_set_background(&app->font, text_bg);
+
+    for (int i = 0; i < app->tab_count; ++i) {
+        editor_apply_theme(&app->tabs[i], th);
+    }
+}
+
+void theme_picker_open(App *app)
+{
+    close_overlays(app);
+    app->theme_picker_open = true;
+    app->theme_picker_scroll = 0;
+    app->theme_picker_sel = 0;
+    snprintf(app->theme_picker_orig, sizeof(app->theme_picker_orig), "%s", theme_current()->name);
+
+    app->available_theme_count = lua_bridge_list_themes(app->available_themes, 128);
+    for (int i = 0; i < app->available_theme_count; ++i) {
+        if (strcmp(app->available_themes[i], app->theme_picker_orig) == 0) {
+            app->theme_picker_sel = i;
+            break;
+        }
+    }
+}
+
+bool theme_picker_handle_event(App *app, const SDL_Event *ev)
+{
+    if (!app->theme_picker_open) return false;
+
+    if (ev->type == SDL_EVENT_KEY_DOWN) {
+        SDL_Keycode key = ev->key.key;
+        int old_sel = app->theme_picker_sel;
+
+        if (key == SDLK_ESCAPE) {
+            cgui_apply_theme_all(app, app->theme_picker_orig);
+            app->theme_picker_open = false;
+            return true;
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            if (app->theme_picker_sel >= 0 && app->theme_picker_sel < app->available_theme_count) {
+                cgui_apply_theme_all(app, app->available_themes[app->theme_picker_sel]);
+            }
+            app->theme_picker_open = false;
+            return true;
+        } else if (key == SDLK_UP) {
+            if (app->theme_picker_sel > 0) app->theme_picker_sel--;
+        } else if (key == SDLK_DOWN) {
+            if (app->theme_picker_sel + 1 < app->available_theme_count) app->theme_picker_sel++;
+        } else if (key == SDLK_PAGEUP) {
+            app->theme_picker_sel -= 10;
+            if (app->theme_picker_sel < 0) app->theme_picker_sel = 0;
+        } else if (key == SDLK_PAGEDOWN) {
+            app->theme_picker_sel += 10;
+            if (app->theme_picker_sel >= app->available_theme_count)
+                app->theme_picker_sel = app->available_theme_count - 1;
+        }
+
+        if (app->theme_picker_sel != old_sel && app->theme_picker_sel >= 0 &&
+            app->theme_picker_sel < app->available_theme_count) {
+            cgui_apply_theme_all(app, app->available_themes[app->theme_picker_sel]);
+        }
+        return true;
+    } else if (ev->type == SDL_EVENT_MOUSE_WHEEL) {
+        int old_sel = app->theme_picker_sel;
+        app->theme_picker_sel -= (int)ev->wheel.y * 3;
+        if (app->theme_picker_sel < 0) app->theme_picker_sel = 0;
+        if (app->theme_picker_sel >= app->available_theme_count)
+            app->theme_picker_sel = app->available_theme_count - 1;
+
+        if (app->theme_picker_sel != old_sel && app->theme_picker_sel >= 0 &&
+            app->theme_picker_sel < app->available_theme_count) {
+            cgui_apply_theme_all(app, app->available_themes[app->theme_picker_sel]);
+        }
+        return true;
+    } else if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT) {
+        float w = (float)app->vk.swapchain_extent.width;
+        float h = (float)app->vk.swapchain_extent.height;
+        float pw = w * 0.5f < 480.0f ? 480.0f : w * 0.5f;
+        if (pw > w - 40.0f) pw = w - 40.0f;
+        float ph = h * 0.65f < 360.0f ? 360.0f : h * 0.65f;
+        if (ph > h - 40.0f) ph = h - 40.0f;
+        float px = (w - pw) * 0.5f;
+        float py = (h - ph) * 0.5f;
+        float row_h = app->font.line_height + 8.0f;
+        float list_top = py + 52.0f;
+
+        float mx = (float)ev->button.x;
+        float my = (float)ev->button.y;
+        if (mx < px || mx >= px + pw || my < py || my >= py + ph) {
+            cgui_apply_theme_all(app, app->theme_picker_orig);
+            app->theme_picker_open = false;
+        } else if (my >= list_top) {
+            int idx = app->theme_picker_scroll + (int)((my - list_top) / row_h);
+            if (idx >= 0 && idx < app->available_theme_count) {
+                app->theme_picker_sel = idx;
+                cgui_apply_theme_all(app, app->available_themes[idx]);
+                app->theme_picker_open = false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+void draw_theme_picker(App *app, VkContext *ctx)
+{
+    const Theme *th = theme_current();
+    float w = (float)ctx->swapchain_extent.width;
+    float h = (float)ctx->swapchain_extent.height;
+    float pw = w * 0.5f < 480.0f ? 480.0f : w * 0.5f;
+    if (pw > w - 40.0f) pw = w - 40.0f;
+    float ph = h * 0.65f < 360.0f ? 360.0f : h * 0.65f;
+    if (ph > h - 40.0f) ph = h - 40.0f;
+    float px = (w - pw) * 0.5f;
+    float py = (h - ph) * 0.5f;
+
+    uint8_t scrim[4] = { 10, 10, 14, 80 };
+    const uint8_t *panel_bg = th->overlay_bg;
+    const uint8_t *border   = th->overlay_edge;
+    const uint8_t *row_sel  = th->overlay_sel;
+    const uint8_t *title_c  = th->fg;
+    const uint8_t *dim_c    = th->gutter_fg;
+    const uint8_t *accent   = th->caret;
+
+    vk_draw_rounded_rect(&app->draw, 0, 0, w, h, 0.0f, 1.0f, scrim);
+    vk_draw_rounded_rect(&app->draw, px - 1.0f, py - 1.0f, pw + 2.0f, ph + 2.0f, 10.0f, 1.0f, border);
+    vk_draw_rounded_rect(&app->draw, px, py, pw, ph, 9.0f, 1.0f, panel_bg);
+
+    font_draw(&app->font, ctx, px + 20.0f, py + 30.0f, "Color Themes  (Enter = apply, Esc = cancel, ↑↓ = preview)", title_c);
+
+    float row_h = app->font.line_height + 8.0f;
+    float list_top = py + 52.0f;
+    int visible = (int)((ph - 80.0f) / row_h);
+    if (visible < 1) visible = 1;
+
+    if (app->theme_picker_sel < app->theme_picker_scroll)
+        app->theme_picker_scroll = app->theme_picker_sel;
+    if (app->theme_picker_sel >= app->theme_picker_scroll + visible)
+        app->theme_picker_scroll = app->theme_picker_sel - visible + 1;
+    if (app->theme_picker_scroll < 0) app->theme_picker_scroll = 0;
+
+    int n = app->available_theme_count;
+    for (int i = 0; i < visible; ++i) {
+        int idx = app->theme_picker_scroll + i;
+        if (idx >= n) break;
+        float ry = list_top + i * row_h;
+        if (idx == app->theme_picker_sel) {
+            vk_draw_rounded_rect(&app->draw, px + 10.0f, ry, pw - 20.0f, row_h, 5.0f, 1.0f, row_sel);
+            vk_draw_rounded_rect(&app->draw, px + 12.0f, ry + 4.0f, 3.0f, row_h - 8.0f, 1.5f, 1.0f, accent);
+        }
+
+        const char *tname = app->available_themes[idx];
+        bool is_current = strcmp(tname, th->name) == 0;
+        char label[128];
+        snprintf(label, sizeof(label), "%s%s", tname, is_current ? "  ✓" : "");
+
+        float baseline = ry + (row_h + app->font.ascent + app->font.descent) * 0.5f;
+        font_draw(&app->font, ctx, px + 24.0f, baseline, label, is_current ? accent : title_c);
+    }
+
+    char status[128];
+    snprintf(status, sizeof(status), "%d / %d themes",
+             n > 0 ? app->theme_picker_sel + 1 : 0, n);
+    font_draw(&app->font, ctx, px + 20.0f, py + ph - 16.0f, status, dim_c);
 }
 
 static void cmd_new_file(App *app)      { tab_add(app, NULL, ""); }
@@ -307,6 +484,18 @@ static void cmd_select_font(App *app)
     close_overlays(app);
     app->picker_open = true;
     app->picker_sel = app->font_index;
+}
+
+static void cmd_select_theme(App *app)
+{
+    theme_picker_open(app);
+}
+
+static void cmd_toggle_theme(App *app)
+{
+    const Theme *cur = theme_current();
+    const char *next = cur->is_dark ? "light" : "onedark";
+    cgui_apply_theme_all(app, next);
 }
 
 static void set_font_size(App *app, float size)
@@ -353,6 +542,8 @@ const Command app_commands[] = {
     { "Search: Find",            "Ctrl+F",       cmd_find },
     { "Search: Replace",         "Ctrl+H",       cmd_replace },
     { "Go: Go to Line…",         "Ctrl+G",       cmd_goto_line },
+    { "Preferences: Color Theme…", "F2",         cmd_select_theme },
+    { "Preferences: Toggle Dark / Light Theme", "Alt+T", cmd_toggle_theme },
     { "View: Select Font…",      "F1",           cmd_select_font },
     { "View: Increase Font Size", "Ctrl+=",      cmd_font_bigger },
     { "View: Decrease Font Size", "Ctrl+-",      cmd_font_smaller },
@@ -473,7 +664,10 @@ int main(int argc, char **argv)
 
     theme_init();
     lua_bridge_init();
+    lua_bridge_set_app(&app);
     lua_bridge_load_user_config();
+    lua_bridge_apply_config(&app);
+    cgui_apply_theme_all(&app, theme_current()->name);
 
     editor_set_draw_context(&app.draw);
     const char *starter =
@@ -555,7 +749,15 @@ int main(int argc, char **argv)
                     continue;
             }
 
+            if (app.theme_picker_open) {
+                if (theme_picker_handle_event(&app, &ev))
+                    continue;
+            }
+
             if (ev.type == SDL_EVENT_KEY_DOWN) {
+                if (lua_bridge_handle_key(&app, ev.key.key, ev.key.mod))
+                    continue;
+
                 SDL_Keymod mod = ev.key.mod;
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
                 bool shift = (mod & SDL_KMOD_SHIFT) != 0;
@@ -566,22 +768,27 @@ int main(int argc, char **argv)
                     continue;
                 }
 
+                if (alt && !ctrl && ev.key.key == SDLK_T) {
+                    cmd_toggle_theme(&app);
+                    continue;
+                }
+
                 if (ctrl && shift && ev.key.key == SDLK_P) {
                     palette_show(&app);
                     continue;
                 }
-                if (!app.picker_open && ctrl && !shift &&
+                if (!app.picker_open && !app.theme_picker_open && ctrl && !shift &&
                     (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS ||
                      ev.key.key == SDLK_KP_PLUS)) {
                     cmd_font_bigger(&app);
                     continue;
                 }
-                if (!app.picker_open && ctrl &&
+                if (!app.picker_open && !app.theme_picker_open && ctrl &&
                     (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS)) {
                     cmd_font_smaller(&app);
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_0) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_0) {
                     cmd_font_reset(&app);
                     continue;
                 }
@@ -595,15 +802,19 @@ int main(int argc, char **argv)
                     app.picker_sel = app.font_index;
                     continue;
                 }
-                if (!app.picker_open && ctrl && shift && ev.key.key == SDLK_O) {
+                if (ev.key.key == SDLK_F2) {
+                    theme_picker_open(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && ctrl && shift && ev.key.key == SDLK_O) {
                     project_show_folder_dialog(&app);
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_O) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_O) {
                     file_open_dialog(&app);
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_F) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_F) {
                     app.find_open = true;
                     app.replace_mode = false;
                     app.find_field = 0;
@@ -611,7 +822,7 @@ int main(int argc, char **argv)
                     app.find_status[0] = 0;
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_H) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_H) {
                     app.find_open = true;
                     app.replace_mode = true;
                     app.find_field = 0;
@@ -620,22 +831,22 @@ int main(int argc, char **argv)
                     continue;
                 }
 
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_N) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_N) {
                     tab_add(&app, NULL, "");
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_W) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_W) {
                     tab_close_at(&app, app.tab_active);
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_TAB) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_TAB) {
                     if (app.tab_count > 0) {
                         app.tab_active = (app.tab_active + (shift ? app.tab_count - 1 : 1)) % app.tab_count;
                         update_window_title(&app);
                     }
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_G) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_G) {
                     app.goto_open = true;
                     app.find_open = false;
                     app.picker_open = false;
@@ -643,7 +854,7 @@ int main(int argc, char **argv)
                     app.goto_buf[0] = 0;
                     continue;
                 }
-                if (!app.picker_open && ctrl && ev.key.key == SDLK_S) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_S) {
                     if (shift || !(app_ed(&app) && app_ed(&app)->path[0]))
                         file_save_as_dialog(&app);
                     else {
@@ -658,7 +869,7 @@ int main(int argc, char **argv)
             if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 ev.button.button == SDL_BUTTON_LEFT &&
                 ev.button.y < 28 &&
-                !app.find_open && !app.goto_open && !app.picker_open) {
+                !app.find_open && !app.goto_open && !app.picker_open && !app.theme_picker_open) {
                 tab_bar_handle_click(&app, (float)ev.button.x);
                 continue;
             }
@@ -700,14 +911,14 @@ int main(int argc, char **argv)
 
             if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 ev.button.button == SDL_BUTTON_LEFT &&
-                !app.find_open && !app.goto_open && !app.picker_open &&
+                !app.find_open && !app.goto_open && !app.picker_open && !app.theme_picker_open &&
                 project_handle_click(&app, (float)ev.button.x, (float)ev.button.y,
                                      28.0f, 26.0f,
                                      (float)app.vk.swapchain_extent.height))
                 continue;
 
             if (ev.type == SDL_EVENT_MOUSE_WHEEL &&
-                !app.find_open && !app.goto_open && !app.picker_open &&
+                !app.find_open && !app.goto_open && !app.picker_open && !app.theme_picker_open &&
                 project_handle_wheel(&app, ev.wheel.y, 28.0f, 26.0f,
                                      (float)app.vk.swapchain_extent.height))
                 continue;
@@ -786,6 +997,8 @@ int main(int argc, char **argv)
             draw_find_bar(&app, &app.vk);
         if (app.picker_open)
             draw_picker(&app, &app.vk);
+        if (app.theme_picker_open)
+            draw_theme_picker(&app, &app.vk);
         if (app.palette_open)
             draw_palette(&app, &app.vk);
 

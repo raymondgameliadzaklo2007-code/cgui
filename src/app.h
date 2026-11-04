@@ -132,11 +132,23 @@ typedef struct App {
     bool running;
     bool framebuffer_resized;
     bool soft_wrap;
+
+    /* Theme picker */
+    bool   theme_picker_open;
+    int    theme_picker_sel;
+    int    theme_picker_scroll;
+    char   available_themes[128][64];
+    int    available_theme_count;
+    char   theme_picker_orig[64];
 } App;
 
 /* Implemented in main.c */
 void update_window_title(App *app);
 void show_save_as_dialog(App *app, int tab_index, SaveIntent intent);
 void close_overlays(App *app);
+void cgui_apply_theme_all(App *app, const char *theme_name);
+void theme_picker_open(App *app);
+void draw_theme_picker(App *app, VkContext *ctx);
+bool theme_picker_handle_event(App *app, const SDL_Event *ev);
 
 #endif /* CGUI_APP_H */

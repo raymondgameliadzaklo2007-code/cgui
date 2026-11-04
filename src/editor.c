@@ -680,7 +680,9 @@ static void ensure_caret_visible(Editor *ed)
 
 void editor_apply_theme(Editor *ed, const Theme *th)
 {
-    if (!ed || !th) return;
+    if (!ed) return;
+    if (!th) th = theme_current();
+    if (!th) return;
     memcpy(ed->text_color, th->fg, 4);
     memcpy(ed->caret_color, th->caret, 4);
     memcpy(ed->sel_color, th->selection, 4);

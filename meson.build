@@ -33,10 +33,8 @@ if not lua_dep.found()
   lua_dep = lua_sub.get_variable('lua_dep')
 endif
 
-# NvChad base46 themes via wrap
-base46_sub = subproject('base46', required: false)
-
-themes_dir = meson.current_source_dir() / 'subprojects' / 'base46' / 'lua' / 'base46' / 'themes'
+# Default themes path
+themes_dir = meson.current_source_dir() / 'assets' / 'themes'
 add_project_arguments('-DCGUI_DEFAULT_THEMES_PATH="@0@"'.format(themes_dir), language: 'c')
 
 glslang = find_program('glslangValidator', 'glslang', required: true)

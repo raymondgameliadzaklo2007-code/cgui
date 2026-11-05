@@ -107,13 +107,169 @@ static bool get_table_hex(lua_State *L, int tidx, const char *key, uint8_t out[4
     return ok;
 }
 
-static void apply_hl_override(lua_State *L, int hl_idx, const char *group, uint8_t out[4])
+static bool resolve_color_name(lua_State *L, int t_b30, int t_b16, const char *val, uint8_t out[4])
 {
+    if (!val || !out) return false;
+    if (theme_parse_hex(val, out)) return true;
+
+    /* Check in base_30 table if available */
+    if (t_b30 > 0 && lua_istable(L, t_b30)) {
+        lua_getfield(L, t_b30, val);
+        if (lua_isstring(L, -1)) {
+            bool ok = theme_parse_hex(lua_tostring(L, -1), out);
+            lua_pop(L, 1);
+            if (ok) return true;
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+
+    /* Check in base_16 table if available */
+    if (t_b16 > 0 && lua_istable(L, t_b16)) {
+        lua_getfield(L, t_b16, val);
+        if (lua_isstring(L, -1)) {
+            bool ok = theme_parse_hex(lua_tostring(L, -1), out);
+            lua_pop(L, 1);
+            if (ok) return true;
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+
+    return false;
+}
+
+static void apply_hl_override_entry(lua_State *L, int hl_idx, int t_b30, int t_b16,
+                                   const char *group, uint8_t out[4])
+{
+    if (hl_idx <= 0 || !lua_istable(L, hl_idx)) return;
     lua_getfield(L, hl_idx, group);
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "fg");
         if (lua_isstring(L, -1)) {
-            theme_parse_hex(lua_tostring(L, -1), out);
+            resolve_color_name(L, t_b30, t_b16, lua_tostring(L, -1), out);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+static void apply_table_overrides(lua_State *L, int hl_idx, int t_b30, int t_b16, Theme *th)
+{
+    if (hl_idx <= 0 || !lua_istable(L, hl_idx)) return;
+
+    /* Keywords */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.return", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.function", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.directive", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.storage", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.modifier", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Keyword", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Statement", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Conditional", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Repeat", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Label", th->syntax[HL_KEYWORD]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Exception", th->syntax[HL_KEYWORD]);
+
+    /* Types */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@type", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@type.builtin", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@type.qualifier", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Type", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Structure", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "StorageClass", th->syntax[HL_TYPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Typedef", th->syntax[HL_TYPE]);
+
+    /* Functions */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@function", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@function.call", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@function.builtin", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@function.macro", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@method", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@method.call", th->syntax[HL_FUNCTION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Function", th->syntax[HL_FUNCTION]);
+
+    /* Strings */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@string", th->syntax[HL_STRING]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@string.special", th->syntax[HL_STRING]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@character", th->syntax[HL_STRING]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "String", th->syntax[HL_STRING]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Character", th->syntax[HL_STRING]);
+
+    /* Numbers & Constants */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@number", th->syntax[HL_NUMBER]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@float", th->syntax[HL_NUMBER]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Number", th->syntax[HL_NUMBER]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Float", th->syntax[HL_NUMBER]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@constant", th->syntax[HL_CONSTANT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@constant.builtin", th->syntax[HL_CONSTANT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@constant.macro", th->syntax[HL_CONSTANT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@boolean", th->syntax[HL_CONSTANT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Constant", th->syntax[HL_CONSTANT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Boolean", th->syntax[HL_CONSTANT]);
+
+    /* Comments */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@comment", th->syntax[HL_COMMENT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@comment.documentation", th->syntax[HL_COMMENT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Comment", th->syntax[HL_COMMENT]);
+
+    /* Operators */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@operator", th->syntax[HL_OPERATOR]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Operator", th->syntax[HL_OPERATOR]);
+
+    /* Preprocessor */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@preproc", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@include", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@define", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "PreProc", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Include", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Define", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Macro", th->syntax[HL_PREPROC]);
+
+    /* Fields / Properties */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@property", th->syntax[HL_PROPERTY]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@field", th->syntax[HL_PROPERTY]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Identifier", th->syntax[HL_PROPERTY]);
+
+    /* Variables */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@variable", th->syntax[HL_DEFAULT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@variable.builtin", th->syntax[HL_DEFAULT]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@variable.parameter", th->syntax[HL_DEFAULT]);
+
+    /* UI element overrides */
+    lua_getfield(L, hl_idx, "Normal");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "bg");
+        if (lua_isstring(L, -1)) {
+            uint8_t c[4];
+            if (resolve_color_name(L, t_b30, t_b16, lua_tostring(L, -1), c)) {
+                memcpy(th->bg, c, 4);
+                memcpy(th->gutter_bg, c, 4);
+                memcpy(th->tab_active_bg, c, 4);
+            }
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "fg");
+        if (lua_isstring(L, -1)) {
+            uint8_t c[4];
+            if (resolve_color_name(L, t_b30, t_b16, lua_tostring(L, -1), c)) {
+                memcpy(th->fg, c, 4);
+                memcpy(th->syntax[HL_DEFAULT], c, 4);
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, hl_idx, "LineNr");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "fg");
+        if (lua_isstring(L, -1)) {
+            uint8_t c[4];
+            if (resolve_color_name(L, t_b30, t_b16, lua_tostring(L, -1), c)) {
+                memcpy(th->gutter_fg, c, 4);
+            }
         }
         lua_pop(L, 1);
     }
@@ -188,9 +344,8 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     if (!get_table_hex(L, t, "statusline_bg", statusline_bg))
         get_table_hex(L, t, "statuslinebg", statusline_bg);
 
-    if (pushed_base30) {
-        lua_pop(L, 1);
-    }
+    /* Keep t valid as base_30 table index for override lookups */
+    int t_b30 = t;
 
     /* Populate Theme struct from base_30 defaults */
     memcpy(th->bg, black, 4);
@@ -218,95 +373,96 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->syntax[HL_PROPERTY], red, 4);
 
     /* If base_16 is provided, use standard Neovim / Tree-sitter palette */
+    int t_b16 = 0;
     lua_getfield(L, abs_idx, "base_16");
     if (lua_istable(L, -1)) {
-        int b16 = lua_gettop(L);
+        t_b16 = lua_gettop(L);
         uint8_t c[4];
-        if (get_table_hex(L, b16, "base00", c)) {
+        if (get_table_hex(L, t_b16, "base00", c)) {
             memcpy(th->bg, c, 4);
             memcpy(th->gutter_bg, c, 4);
             memcpy(th->tab_active_bg, c, 4);
         }
-        if (get_table_hex(L, b16, "base01", c)) {
+        if (get_table_hex(L, t_b16, "base01", c)) {
             memcpy(th->line_highlight, c, 4);
         }
-        if (get_table_hex(L, b16, "base02", c)) {
+        if (get_table_hex(L, t_b16, "base02", c)) {
             memcpy(th->selection, c, 4);
             th->selection[3] = 120;
         }
-        if (get_table_hex(L, b16, "base03", c)) {
+        if (get_table_hex(L, t_b16, "base03", c)) {
             memcpy(th->syntax[HL_COMMENT], c, 4);
         }
-        if (get_table_hex(L, b16, "base04", c)) {
+        if (get_table_hex(L, t_b16, "base04", c)) {
             memcpy(th->gutter_fg, c, 4);
         }
-        if (get_table_hex(L, b16, "base05", c)) {
+        if (get_table_hex(L, t_b16, "base05", c)) {
             memcpy(th->fg, c, 4);
             memcpy(th->syntax[HL_DEFAULT], c, 4);
-            memcpy(th->syntax[HL_OPERATOR], c, 4);
         }
-        if (get_table_hex(L, b16, "base08", c)) {
+        if (get_table_hex(L, t_b16, "base08", c)) {
             memcpy(th->syntax[HL_PREPROC], c, 4);
             memcpy(th->syntax[HL_PROPERTY], c, 4);
         }
-        if (get_table_hex(L, b16, "base09", c)) {
+        if (get_table_hex(L, t_b16, "base09", c)) {
             memcpy(th->syntax[HL_NUMBER], c, 4);
             memcpy(th->syntax[HL_CONSTANT], c, 4);
         }
-        if (get_table_hex(L, b16, "base0A", c)) {
+        if (get_table_hex(L, t_b16, "base0A", c)) {
             memcpy(th->syntax[HL_TYPE], c, 4);
         }
-        if (get_table_hex(L, b16, "base0B", c)) {
+        if (get_table_hex(L, t_b16, "base0B", c)) {
             memcpy(th->syntax[HL_STRING], c, 4);
         }
-        if (get_table_hex(L, b16, "base0C", c)) {
+        if (get_table_hex(L, t_b16, "base0C", c)) {
             memcpy(th->syntax[HL_OPERATOR], c, 4);
         }
-        if (get_table_hex(L, b16, "base0D", c)) {
+        if (get_table_hex(L, t_b16, "base0D", c)) {
             memcpy(th->syntax[HL_FUNCTION], c, 4);
             memcpy(th->caret, c, 4);
         }
-        if (get_table_hex(L, b16, "base0E", c)) {
+        if (get_table_hex(L, t_b16, "base0E", c)) {
             memcpy(th->syntax[HL_KEYWORD], c, 4);
         }
     }
-    lua_pop(L, 1); /* pop base_16 */
 
-    /* If polish_hl is provided, apply treesitter / highlight overrides */
+    /* Apply polish_hl overrides (treesitter, syntax, defaults) */
     lua_getfield(L, abs_idx, "polish_hl");
     if (lua_istable(L, -1)) {
         int phl = lua_gettop(L);
         lua_getfield(L, phl, "treesitter");
         if (lua_istable(L, -1)) {
-            int ts = lua_gettop(L);
-            apply_hl_override(L, ts, "@keyword", th->syntax[HL_KEYWORD]);
-            apply_hl_override(L, ts, "@keyword.return", th->syntax[HL_KEYWORD]);
-            apply_hl_override(L, ts, "@type", th->syntax[HL_TYPE]);
-            apply_hl_override(L, ts, "@function", th->syntax[HL_FUNCTION]);
-            apply_hl_override(L, ts, "@function.call", th->syntax[HL_FUNCTION]);
-            apply_hl_override(L, ts, "@string", th->syntax[HL_STRING]);
-            apply_hl_override(L, ts, "@number", th->syntax[HL_NUMBER]);
-            apply_hl_override(L, ts, "@comment", th->syntax[HL_COMMENT]);
-            apply_hl_override(L, ts, "@operator", th->syntax[HL_OPERATOR]);
-            apply_hl_override(L, ts, "@constant", th->syntax[HL_CONSTANT]);
-            apply_hl_override(L, ts, "@property", th->syntax[HL_PROPERTY]);
-            apply_hl_override(L, ts, "@variable", th->syntax[HL_DEFAULT]);
+            apply_table_overrides(L, lua_gettop(L), t_b30, t_b16, th);
         }
         lua_pop(L, 1); /* pop treesitter */
 
+        lua_getfield(L, phl, "syntax");
+        if (lua_istable(L, -1)) {
+            apply_table_overrides(L, lua_gettop(L), t_b30, t_b16, th);
+        }
+        lua_pop(L, 1); /* pop syntax */
+
         lua_getfield(L, phl, "defaults");
         if (lua_istable(L, -1)) {
-            int def = lua_gettop(L);
-            apply_hl_override(L, def, "Comment", th->syntax[HL_COMMENT]);
-            apply_hl_override(L, def, "String", th->syntax[HL_STRING]);
-            apply_hl_override(L, def, "Function", th->syntax[HL_FUNCTION]);
-            apply_hl_override(L, def, "Keyword", th->syntax[HL_KEYWORD]);
-            apply_hl_override(L, def, "Type", th->syntax[HL_TYPE]);
-            apply_hl_override(L, def, "Number", th->syntax[HL_NUMBER]);
+            apply_table_overrides(L, lua_gettop(L), t_b30, t_b16, th);
         }
         lua_pop(L, 1); /* pop defaults */
     }
     lua_pop(L, 1); /* pop polish_hl */
+
+    /* Apply top-level hl_override if present */
+    lua_getfield(L, abs_idx, "hl_override");
+    if (lua_istable(L, -1)) {
+        apply_table_overrides(L, lua_gettop(L), t_b30, t_b16, th);
+    }
+    lua_pop(L, 1); /* pop hl_override */
+
+    if (t_b16 > 0) {
+        lua_pop(L, 1); /* pop base_16 */
+    }
+    if (pushed_base30) {
+        lua_pop(L, 1); /* pop base_30 */
+    }
 
     /* Tab bar */
     memcpy(th->tab_strip_bg, darker_black, 4);

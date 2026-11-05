@@ -13,43 +13,108 @@
 
 const TSLanguage *tree_sitter_c(void);
 
-/* Known-good captures only (no unknown node types). */
+/* Comprehensive C Tree-sitter query matching Neovim / NvChad captures */
 static const char *C_HIGHLIGHT_QUERY =
+    /* Control flow and statement keywords */
     "\"break\" @keyword\n"
     "\"case\" @keyword\n"
-    "\"const\" @keyword\n"
     "\"continue\" @keyword\n"
     "\"default\" @keyword\n"
     "\"do\" @keyword\n"
     "\"else\" @keyword\n"
-    "\"enum\" @keyword\n"
-    "\"extern\" @keyword\n"
     "\"for\" @keyword\n"
-    "\"if\" @keyword\n"
-    "\"inline\" @keyword\n"
-    "\"return\" @keyword\n"
-    "\"sizeof\" @keyword\n"
-    "\"static\" @keyword\n"
-    "\"struct\" @keyword\n"
-    "\"switch\" @keyword\n"
-    "\"typedef\" @keyword\n"
-    "\"union\" @keyword\n"
-    "\"volatile\" @keyword\n"
-    "\"while\" @keyword\n"
     "\"goto\" @keyword\n"
+    "\"if\" @keyword\n"
+    "\"return\" @keyword\n"
+    "\"switch\" @keyword\n"
+    "\"while\" @keyword\n"
+    "\"sizeof\" @keyword\n"
+    /* Storage and type modifier keywords */
+    "\"const\" @keyword\n"
+    "\"static\" @keyword\n"
+    "\"extern\" @keyword\n"
+    "\"inline\" @keyword\n"
+    "\"volatile\" @keyword\n"
+    "\"register\" @keyword\n"
+    "\"auto\" @keyword\n"
+    "\"restrict\" @keyword\n"
+    "\"struct\" @keyword\n"
+    "\"union\" @keyword\n"
+    "\"enum\" @keyword\n"
+    "\"typedef\" @keyword\n"
+    /* Types */
     "(primitive_type) @type\n"
     "(type_identifier) @type\n"
+    "(sized_type_specifier) @type\n"
+    /* Literals */
     "(string_literal) @string\n"
     "(system_lib_string) @string\n"
     "(char_literal) @string\n"
     "(number_literal) @number\n"
     "(comment) @comment\n"
-    "(preproc_directive) @keyword\n"
-    "(preproc_include) @keyword\n"
-    "(preproc_def) @keyword\n"
+    /* Preprocessor directives - specific directives mapped to preproc (red) */
+    "\"#include\" @preproc\n"
+    "\"#define\" @preproc\n"
+    "\"#ifdef\" @preproc\n"
+    "\"#ifndef\" @preproc\n"
+    "\"#if\" @preproc\n"
+    "\"#else\" @preproc\n"
+    "\"#elif\" @preproc\n"
+    "\"#endif\" @preproc\n"
+    "\"#undef\" @preproc\n"
+    "\"#pragma\" @preproc\n"
+    "\"#error\" @preproc\n"
+    "\"#warning\" @preproc\n"
+    "(preproc_directive) @preproc\n"
+    /* Macro names and enum constants */
+    "(preproc_def name: (identifier) @constant)\n"
+    "(preproc_function_def name: (identifier) @function)\n"
+    "(enumerator name: (identifier) @constant)\n"
+    /* Function calls and declarators */
     "(call_expression function: (identifier) @function)\n"
+    "(call_expression function: (field_expression field: (field_identifier) @function))\n"
     "(function_declarator declarator: (identifier) @function)\n"
+    "(function_declarator declarator: (pointer_declarator declarator: (identifier) @function))\n"
+    /* Struct / union fields */
     "(field_identifier) @property\n"
+    /* Built-in constants (NULL, true, false, nullptr) */
+    "((identifier) @constant_builtin)\n"
+    /* Operators */
+    "\"++\" @operator\n"
+    "\"--\" @operator\n"
+    "\"==\" @operator\n"
+    "\"!=\" @operator\n"
+    "\"<=\" @operator\n"
+    "\">=\" @operator\n"
+    "\"&&\" @operator\n"
+    "\"||\" @operator\n"
+    "\"<<\" @operator\n"
+    "\">>\" @operator\n"
+    "\"+=\" @operator\n"
+    "\"-=\" @operator\n"
+    "\"*=\" @operator\n"
+    "\"/=\" @operator\n"
+    "\"%=\" @operator\n"
+    "\"&=\" @operator\n"
+    "\"|=\" @operator\n"
+    "\"^=\" @operator\n"
+    "\"->\" @operator\n"
+    "\"+\" @operator\n"
+    "\"-\" @operator\n"
+    "\"*\" @operator\n"
+    "\"/\" @operator\n"
+    "\"%\" @operator\n"
+    "\"=\" @operator\n"
+    "\"<\" @operator\n"
+    "\">\" @operator\n"
+    "\"!\" @operator\n"
+    "\"&\" @operator\n"
+    "\"|\" @operator\n"
+    "\"^\" @operator\n"
+    "\"~\" @operator\n"
+    "\"?\" @operator\n"
+    "\":\" @operator\n"
+    "\".\" @operator\n"
     ;
 
 static HlKind capture_to_kind(const char *name, uint32_t len)
@@ -240,8 +305,27 @@ static bool span_push(HlSpan **arr, size_t *count, size_t *cap, HlSpan s)
     return true;
 }
 
+static bool is_constant_builtin(HlReadFn read, void *payload, size_t s, size_t e)
+{
+    size_t len = e - s;
+    if (len < 4 || len > 7 || !read) return false;
+    char buf[8];
+    for (size_t i = 0; i < len; ++i) {
+        size_t n = 0;
+        const char *p = read(payload, s + i, &n);
+        if (!p || n == 0) return false;
+        buf[i] = p[0];
+    }
+    buf[len] = '\0';
+    if (len == 4 && (strcmp(buf, "NULL") == 0 || strcmp(buf, "true") == 0)) return true;
+    if (len == 5 && strcmp(buf, "false") == 0) return true;
+    if (len == 7 && strcmp(buf, "nullptr") == 0) return true;
+    return false;
+}
+
 /* Collect captures intersecting [lo, hi) (whole file when full). */
 static void collect(Highlighter *hl, TSTree *tree, bool full, size_t lo, size_t hi,
+                    HlReadFn read, void *payload,
                     HlSpan **out, size_t *count, size_t *cap)
 {
     TSQueryCursor *cursor = ts_query_cursor_new();
@@ -256,12 +340,20 @@ static void collect(Highlighter *hl, TSTree *tree, bool full, size_t lo, size_t 
             uint32_t nlen = 0;
             const char *name = ts_query_capture_name_for_id((TSQuery *)hl->query,
                                                             cap_.index, &nlen);
-            HlKind kind = capture_to_kind(name, nlen);
-            if (kind == HL_DEFAULT) continue;
             size_t s = ts_node_start_byte(cap_.node);
             size_t e = ts_node_end_byte(cap_.node);
             if (e <= s) continue;
             if (!full && !(s < hi && e > lo)) continue;
+
+            HlKind kind = HL_DEFAULT;
+            if (nlen == 16 && !strncmp(name, "constant_builtin", 16)) {
+                if (is_constant_builtin(read, payload, s, e)) {
+                    kind = HL_CONSTANT;
+                }
+            } else {
+                kind = capture_to_kind(name, nlen);
+            }
+            if (kind == HL_DEFAULT) continue;
             span_push(out, count, cap, (HlSpan){ .start = s, .end = e, .kind = kind });
         }
     }
@@ -324,7 +416,7 @@ bool highlight_update_input(Highlighter *hl, HlReadFn read, void *payload, size_
 
     if (full) {
         hl->span_count = 0;
-        collect(hl, tree, true, 0, len, &hl->spans, &hl->span_count, &hl->span_cap);
+        collect(hl, tree, true, 0, len, read, payload, &hl->spans, &hl->span_count, &hl->span_cap);
         if (hl->span_count > 1)
             qsort(hl->spans, hl->span_count, sizeof(HlSpan), span_cmp);
         flatten(hl);
@@ -340,7 +432,7 @@ bool highlight_update_input(Highlighter *hl, HlReadFn read, void *payload, size_
 
         HlSpan *fresh = NULL;
         size_t fcount = 0, fcap = 0;
-        collect(hl, tree, false, lo, hi, &fresh, &fcount, &fcap);
+        collect(hl, tree, false, lo, hi, read, payload, &fresh, &fcount, &fcap);
         if (fcount > 1) qsort(fresh, fcount, sizeof(HlSpan), span_cmp);
 
         /* Merge: keep old spans outside [lo, hi), add fresh ones. */

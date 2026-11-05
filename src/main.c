@@ -967,6 +967,7 @@ int main(int argc, char **argv)
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
                 bool shift = (mod & SDL_KMOD_SHIFT) != 0;
                 bool alt = (mod & SDL_KMOD_ALT) != 0;
+                bool gui = (mod & SDL_KMOD_GUI) != 0;
 
                 if (alt && !ctrl && ev.key.key == SDLK_Z) {
                     cmd_toggle_soft_wrap(&app);
@@ -975,6 +976,17 @@ int main(int argc, char **argv)
 
                 if (alt && !ctrl && ev.key.key == SDLK_T) {
                     cmd_toggle_theme(&app);
+                    continue;
+                }
+
+                /* Command Palette: Ctrl+Shift+P / Cmd+Shift+P or Ctrl+P */
+                if (!app.picker_open && !app.theme_picker_open && (ctrl || gui) &&
+                    (ev.key.key == SDLK_P || ev.key.key == 'p' || ev.key.key == 'P')) {
+                    if (app.palette_open) {
+                        app.palette_open = false;
+                    } else {
+                        palette_show(&app);
+                    }
                     continue;
                 }
 

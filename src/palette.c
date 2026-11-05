@@ -207,8 +207,8 @@ bool palette_handle_event(App *app, const SDL_Event *ev)
                 app->palette_query[--app->palette_len] = 0;
                 palette_filter(app);
             }
-        } else if (key == SDLK_P && (ev->key.mod & SDL_KMOD_CTRL) &&
-                   (ev->key.mod & SDL_KMOD_SHIFT)) {
+        } else if ((key == SDLK_P || key == 'p' || key == 'P') &&
+                   ((ev->key.mod & SDL_KMOD_CTRL) || (ev->key.mod & SDL_KMOD_GUI))) {
             app->palette_open = false;
         }
         return true;

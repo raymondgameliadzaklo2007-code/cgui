@@ -221,15 +221,59 @@ bool icon_load_svg_memory(Icon *out, VkContext *ctx,
     }
     const unsigned char *argb = cairo_image_surface_get_data(surface);
     int stride = cairo_image_surface_get_stride(surface);
+
+    /* Detect if the SVG is full-color (e.g. diagnostic error red, warning amber, info blue)
+     * vs a monochrome icon mask (e.g. folder, chevron, file outlines) */
+    bool has_color = false;
+    for (int y = 0; y < h && !has_color; ++y) {
+        const uint32_t *row = (const uint32_t *)(argb + (size_t)y * stride);
+        for (int x = 0; x < w; ++x) {
+            uint32_t pixel = row[x];
+            uint8_t a = (uint8_t)(pixel >> 24);
+            if (a > 20) {
+                uint32_t pr = (pixel >> 16) & 0xFF;
+                uint32_t pg = (pixel >> 8) & 0xFF;
+                uint32_t pb = pixel & 0xFF;
+                int ur = (int)((pr * 255) / a);
+                int ug = (int)((pg * 255) / a);
+                int ub = (int)((pb * 255) / a);
+                if (abs(ur - ug) > 15 || abs(ug - ub) > 15 || abs(ur - ub) > 15) {
+                    has_color = true;
+                    break;
+                }
+            }
+        }
+    }
+
     for (int y = 0; y < h; ++y) {
         const uint32_t *row = (const uint32_t *)(argb + (size_t)y * stride);
         for (int x = 0; x < w; ++x) {
             uint32_t pixel = row[x];
+            uint8_t a = (uint8_t)(pixel >> 24);
             size_t offset = ((size_t)y * w + x) * 4;
-            pixels[offset + 0] = 255;
-            pixels[offset + 1] = 255;
-            pixels[offset + 2] = 255;
-            pixels[offset + 3] = (uint8_t)(pixel >> 24);
+            if (has_color) {
+                if (a == 0) {
+                    pixels[offset + 0] = 0;
+                    pixels[offset + 1] = 0;
+                    pixels[offset + 2] = 0;
+                    pixels[offset + 3] = 0;
+                } else {
+                    /* Un-premultiply Cairo ARGB32 to standard RGBA8 */
+                    uint32_t pr = (pixel >> 16) & 0xFF;
+                    uint32_t pg = (pixel >> 8) & 0xFF;
+                    uint32_t pb = pixel & 0xFF;
+                    pixels[offset + 0] = (uint8_t)((pr * 255) / a);
+                    pixels[offset + 1] = (uint8_t)((pg * 255) / a);
+                    pixels[offset + 2] = (uint8_t)((pb * 255) / a);
+                    pixels[offset + 3] = a;
+                }
+            } else {
+                /* Monochrome mask: RGB = 255, alpha from SVG, tinted at render time */
+                pixels[offset + 0] = 255;
+                pixels[offset + 1] = 255;
+                pixels[offset + 2] = 255;
+                pixels[offset + 3] = a;
+            }
         }
     }
     cairo_surface_destroy(surface);

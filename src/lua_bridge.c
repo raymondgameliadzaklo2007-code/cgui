@@ -962,8 +962,12 @@ bool lua_bridge_handle_key(App *app, unsigned int key, unsigned int mod)
 {
     for (int i = 0; i < g_keybinding_count; ++i) {
         KeyBinding *kb = &g_keybindings[i];
-        if (kb->key == (SDL_Keycode)key) {
-            bool ctrl_match = ((kb->mod & SDL_KMOD_CTRL) != 0) == ((mod & SDL_KMOD_CTRL) != 0);
+        bool key_match = (kb->key == (SDL_Keycode)key) ||
+            ((key >= 'a' && key <= 'z') && kb->key == (SDL_Keycode)(key - 'a' + 'A')) ||
+            ((key >= 'A' && key <= 'Z') && kb->key == (SDL_Keycode)(key - 'A' + 'a'));
+        if (key_match) {
+            bool ctrl_match = ((kb->mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0) ==
+                              ((mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0);
             bool shift_match = ((kb->mod & SDL_KMOD_SHIFT) != 0) == ((mod & SDL_KMOD_SHIFT) != 0);
             bool alt_match = ((kb->mod & SDL_KMOD_ALT) != 0) == ((mod & SDL_KMOD_ALT) != 0);
             if (ctrl_match && shift_match && alt_match) {

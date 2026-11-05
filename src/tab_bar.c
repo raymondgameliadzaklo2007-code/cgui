@@ -204,11 +204,11 @@ void draw_tab_bar(App *app, VkContext *ctx)
                                      4.0f, 1.0f, hover_bg);
             }
             if (app->icons_ok && app->icon_close.ready) {
-                uint8_t tint[4] = { 96, 96, 96, 255 };
+                const uint8_t *tint = close_hovered ? text_act : text_in;
                 icon_draw(&app->icons, &app->icon_close, ctx,
                           x + tw - 22.0f, 7.0f, 14.0f, 14.0f, tint);
             } else {
-                font_draw(&app->font, ctx, x + tw - 21.0f, baseline, "x", text_in);
+                font_draw(&app->font, ctx, x + tw - 21.0f, baseline, "x", close_hovered ? text_act : text_in);
             }
         }
 

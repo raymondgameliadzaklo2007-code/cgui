@@ -272,24 +272,34 @@ static float project_tree_top(const App *app, float tab_h)
 static Icon *project_file_icon(App *app, const ProjectEntry *entry,
                                uint8_t tint[4])
 {
+    const Theme *th = theme_current();
     tint[3] = 255;
     if (entry->directory) {
-        tint[0] = 148; tint[1] = 153; tint[2] = 160;
+        if (th->syntax[HL_TYPE][3] > 0) {
+            memcpy(tint, th->syntax[HL_TYPE], 4);
+        } else {
+            tint[0] = 229; tint[1] = 192; tint[2] = 123;
+        }
         return entry->expanded ? &app->project_folder_open_icon
                                : &app->project_folder_icon;
     } else {
-        tint[0] = 72; tint[1] = 75; tint[2] = 81;
         const char *ext = strrchr(entry->name, '.');
         if (ext && (strcmp(ext, ".c") == 0 || strcmp(ext, ".C") == 0 ||
                     strcmp(ext, ".h") == 0 || strcmp(ext, ".H") == 0)) {
+            memcpy(tint, th->syntax[HL_FUNCTION], 4);
             return &app->project_file_code_icon;
         } else if (ext && (strcmp(ext, ".json") == 0 ||
                            strcmp(ext, ".vert") == 0 ||
-                           strcmp(ext, ".frag") == 0)) {
+                           strcmp(ext, ".frag") == 0 ||
+                           strcmp(ext, ".lua") == 0 ||
+                           strcmp(ext, ".scm") == 0)) {
+            memcpy(tint, th->syntax[HL_OPERATOR], 4);
             return &app->project_file_generic_code_icon;
-        } else if (ext && strcmp(ext, ".md") == 0) {
+        } else if (ext && (strcmp(ext, ".md") == 0 || strcmp(ext, ".txt") == 0)) {
+            memcpy(tint, th->sidebar_muted, 4);
             return &app->project_file_book_icon;
         } else {
+            memcpy(tint, th->sidebar_text, 4);
             return &app->project_file_text_icon;
         }
     }
@@ -373,9 +383,9 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         vk_draw_rounded_rect(&app->draw, button_x, button_y, 26.0f, 22.0f,
                              4.0f, 1.0f, hover);
     if (app->project_icons_ok) {
-        uint8_t tint[4] = { 120, 124, 130, 255 };
         icon_draw(&app->icons, &app->project_plus_icon, ctx,
-                  button_x + 6.0f, button_y + 5.0f, 14.0f, 14.0f, tint);
+                  button_x + 6.0f, button_y + 5.0f, 14.0f, 14.0f,
+                  button_hovered ? heading : muted);
     } else {
         font_draw(&app->font, ctx, button_x + 8.0f, header_baseline, "+", muted);
     }
@@ -391,11 +401,15 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
     if (app->project_icons_ok) {
         Icon *chevron = app->project_root_expanded ? &app->project_chevron_down_icon
                                                   : &app->project_chevron_right_icon;
-        uint8_t chevron_tint[4] = { 120, 122, 128, 255 };
-        uint8_t folder_tint[4] = { 148, 153, 160, 255 };
+        uint8_t folder_tint[4];
+        if (th->syntax[HL_TYPE][3] > 0) {
+            memcpy(folder_tint, th->syntax[HL_TYPE], 4);
+        } else {
+            folder_tint[0] = 229; folder_tint[1] = 192; folder_tint[2] = 123; folder_tint[3] = 255;
+        }
         icon_draw(&app->icons, chevron, ctx, 10.0f,
                   (float)(int)(root_y + (row_h - 14.0f) * 0.5f),
-                  14.0f, 14.0f, chevron_tint);
+                  14.0f, 14.0f, muted);
         icon_draw(&app->icons, &app->project_folder_open_icon, ctx, 27.0f,
                   (float)(int)(root_y + (row_h - 16.0f) * 0.5f),
                   16.0f, 16.0f, folder_tint);
@@ -477,9 +491,8 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
                 Icon *chevron = is_expanded_directory
                     ? &app->project_chevron_down_icon
                     : &app->project_chevron_right_icon;
-                uint8_t chevron_tint[4] = { 132, 134, 139, 255 };
                 icon_draw(&app->icons, chevron, ctx, indent - 2.0f, chevron_y,
-                          12.0f, 12.0f, chevron_tint);
+                          12.0f, 12.0f, muted);
             } else {
                 font_draw(&app->font, ctx, indent, baseline,
                           is_expanded_directory ? "v" : ">", muted);

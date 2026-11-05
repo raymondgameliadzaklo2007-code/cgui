@@ -316,6 +316,8 @@ void cgui_apply_theme_all(App *app, const char *theme_name)
     for (int i = 0; i < app->tab_count; ++i) {
         editor_apply_theme(&app->tabs[i], th);
     }
+
+    terminal_apply_theme(&app->terminal);
 }
 
 void theme_picker_open(App *app)

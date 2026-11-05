@@ -94,8 +94,14 @@ static void term_cell_reset(Terminal *term, TermCell *cell)
     cell->flags = 0;
 }
 
-static void term_sync_theme(Terminal *term)
+void terminal_apply_theme(Terminal *term)
 {
+    if (!term) return;
+
+    uint8_t old_dfg[4], old_dbg[4];
+    memcpy(old_dfg, term->default_fg, 4);
+    memcpy(old_dbg, term->default_bg, 4);
+
     const Theme *th = theme_current();
     if (th) {
         memcpy(term->default_fg, th->fg, 4);
@@ -117,9 +123,41 @@ static void term_sync_theme(Terminal *term)
         memcpy(term->header_border, hed, 4);
         memcpy(term->header_fg, dfg, 4);
     }
-    memcpy(term->cur_fg, term->default_fg, 4);
-    memcpy(term->cur_bg, term->default_bg, 4);
-    term->cur_flags = 0;
+
+    /* If current input pen matched the old default fg/bg, update it to the new default */
+    if (memcmp(term->cur_fg, old_dfg, 4) == 0)
+        memcpy(term->cur_fg, term->default_fg, 4);
+    if (memcmp(term->cur_bg, old_dbg, 4) == 0)
+        memcpy(term->cur_bg, term->default_bg, 4);
+
+    /* Update existing grid cells that had the default theme colors */
+    if (term->grid) {
+        int total = term->cols * term->rows;
+        for (int i = 0; i < total; ++i) {
+            TermCell *c = &term->grid[i];
+            if (memcmp(c->fg, old_dfg, 4) == 0)
+                memcpy(c->fg, term->default_fg, 4);
+            if (memcmp(c->bg, old_dbg, 4) == 0)
+                memcpy(c->bg, term->default_bg, 4);
+        }
+    }
+
+    /* Also update scrollback history cells that had default theme colors */
+    if (term->scrollback) {
+        int total_sb = term->scrollback_count * term->cols;
+        for (int i = 0; i < total_sb; ++i) {
+            TermCell *c = &term->scrollback[i];
+            if (memcmp(c->fg, old_dfg, 4) == 0)
+                memcpy(c->fg, term->default_fg, 4);
+            if (memcmp(c->bg, old_dbg, 4) == 0)
+                memcpy(c->bg, term->default_bg, 4);
+        }
+    }
+}
+
+static void term_sync_theme(Terminal *term)
+{
+    terminal_apply_theme(term);
 }
 
 static void term_scroll_up(Terminal *term)

@@ -114,6 +114,7 @@ void terminal_resize_grid(Terminal *term, int new_cols, int new_rows);
 /** Input */
 void terminal_send_input(Terminal *term, const char *data, size_t len);
 void terminal_clear(Terminal *term);
+void terminal_apply_theme(Terminal *term);
 
 /** Drawing and interaction */
 void terminal_draw(Terminal *term, struct VkContext *ctx, struct VkDraw *draw, struct Font *font,

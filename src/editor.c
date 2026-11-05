@@ -225,6 +225,7 @@ static bool buf_insert(Editor *ed, size_t pos, const char *text, size_t len)
     ed->dirty = true;
     ed->hl_dirty = true;
     ed->lsp_dirty = true;
+    ed->lsp_dirty_ms = SDL_GetTicks();
     return true;
 }
 
@@ -248,6 +249,7 @@ static void buf_delete(Editor *ed, size_t pos, size_t n)
     ed->dirty = true;
     ed->hl_dirty = true;
     ed->lsp_dirty = true;
+    ed->lsp_dirty_ms = SDL_GetTicks();
 }
 
 static char *copy_range(const Editor *ed, size_t a, size_t n)
@@ -640,6 +642,27 @@ void editor_insert_completion(Editor *ed, const char *completion)
         editor_delete_selection(ed);
     }
     editor_insert(ed, completion, strlen(completion));
+}
+
+size_t editor_current_word_prefix(const Editor *ed, char *out_prefix, size_t out_cap)
+{
+    if (!ed || !out_prefix || out_cap == 0) return 0;
+    size_t p = ed->caret;
+    while (p > 0) {
+        char c = char_at(ed, p - 1);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            p--;
+        } else {
+            break;
+        }
+    }
+    size_t len = ed->caret - p;
+    if (len >= out_cap) len = out_cap - 1;
+    for (size_t i = 0; i < len; ++i)
+        out_prefix[i] = char_at(ed, p + i);
+    out_prefix[len] = '\0';
+    return len;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2079,6 +2102,19 @@ static const char *gap_read(void *payload, size_t byte, size_t *len)
     return ed->buf + phys;
 }
 
+void editor_flush_lsp_sync(Editor *ed)
+{
+    if (!ed || !ed->lsp || !ed->lsp_dirty || !ed->path[0]) return;
+    size_t len = logical_len(ed);
+    char *text = malloc(len + 1);
+    if (text) {
+        editor_get_text(ed, text, len + 1);
+        lsp_doc_did_change(ed->lsp, ed->path, text, len);
+        free(text);
+    }
+    ed->lsp_dirty = false;
+}
+
 void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
 {
     if (!ed || !ed->font || !ctx) return;
@@ -2094,14 +2130,10 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
     }
 
     if (ed->lsp_dirty && ed->lsp && ed->path[0]) {
-        size_t len = logical_len(ed);
-        char *text = malloc(len + 1);
-        if (text) {
-            editor_get_text(ed, text, len + 1);
-            lsp_doc_did_change(ed->lsp, ed->path, text, len);
-            free(text);
+        uint64_t now = SDL_GetTicks();
+        if (now - ed->lsp_dirty_ms >= 100) {
+            editor_flush_lsp_sync(ed);
         }
-        ed->lsp_dirty = false;
     }
 
     if (g_editor_draw) {

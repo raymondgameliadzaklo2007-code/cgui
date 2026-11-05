@@ -149,6 +149,8 @@ typedef struct App {
     int       completion_scroll;
     float     completion_anchor_x;
     float     completion_anchor_y;
+    uint64_t  completion_debounce_ms;
+    bool      completion_req_pending;
 
     bool      hover_open;
     float     hover_x;

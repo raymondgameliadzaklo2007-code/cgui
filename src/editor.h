@@ -99,6 +99,7 @@ typedef struct Editor {
 
     struct LspClient *lsp;
     bool              lsp_dirty;
+    uint64_t          lsp_dirty_ms;
 } Editor;
 
 bool editor_create(Editor *ed, Font *font, const char *initial);
@@ -155,8 +156,10 @@ int  editor_current_col(const Editor *ed);
 
 void editor_set_draw_context(struct VkDraw *d);
 void editor_set_lsp(Editor *ed, struct LspClient *lsp);
+void editor_flush_lsp_sync(Editor *ed);
 void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y);
 bool editor_line_col_at_point(const Editor *ed, float px, float py, int *out_line, int *out_col);
+size_t editor_current_word_prefix(const Editor *ed, char *out_prefix, size_t out_cap);
 void editor_insert_completion(Editor *ed, const char *completion);
 void editor_apply_theme(Editor *ed, const Theme *th);
 void editor_handle_event(Editor *ed, const void *sdl_event);

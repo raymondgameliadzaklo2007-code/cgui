@@ -24,6 +24,7 @@
 
 #define LSP_MAX_DIAGNOSTICS 128
 #define LSP_MAX_COMPLETIONS 64
+#define LSP_MAX_RAW_COMPLETIONS 256
 #define LSP_MAX_PATH 1024
 #define LSP_BUFFER_SIZE 65536
 
@@ -118,12 +119,23 @@ typedef struct LspClient {
     size_t   rx_len;
     size_t   rx_cap;
 
+    /* Reusable TX and escaping buffers */
+    char    *tx_buf;
+    size_t   tx_cap;
+    char    *esc_buf;
+    size_t   esc_cap;
+
     /* Current active file diagnostics */
     char          diag_path[LSP_MAX_PATH];
     LspDiagnostic diagnostics[LSP_MAX_DIAGNOSTICS];
     int           diagnostic_count;
 
-    /* Completion results */
+    /* Raw completion candidates from server */
+    LspCompletionItem raw_completions[LSP_MAX_RAW_COMPLETIONS];
+    int               raw_completion_count;
+    char              completion_prefix[64];
+
+    /* Filtered/visible completion results */
     LspCompletionItem completions[LSP_MAX_COMPLETIONS];
     int               completion_count;
     int               completion_req_id;
@@ -166,6 +178,7 @@ void lsp_doc_did_close(LspClient *lsp, const char *path);
 
 /** Requests */
 void lsp_request_completion(LspClient *lsp, const char *path, int line, int col);
+void lsp_filter_completions(LspClient *lsp, const char *prefix);
 void lsp_request_hover(LspClient *lsp, const char *path, int line, int col);
 void lsp_request_definition(LspClient *lsp, const char *path, int line, int col);
 void lsp_request_format(LspClient *lsp, const char *path);

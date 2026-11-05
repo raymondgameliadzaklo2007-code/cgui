@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -244,6 +245,16 @@ static void uri_to_path(const char *uri, char *out_path, size_t cap)
         snprintf(out_path, cap, "%s", uri);
 }
 
+static void lsp_ensure_buf_capacity(char **buf, size_t *cap, size_t needed)
+{
+    if (needed > *cap) {
+        size_t ncap = *cap ? *cap : 65536;
+        while (ncap < needed) ncap *= 2;
+        char *nb = realloc(*buf, ncap);
+        if (nb) { *buf = nb; *cap = ncap; }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Transport: Read / Write JSON-RPC Messages                          */
 /* ------------------------------------------------------------------ */
@@ -286,6 +297,11 @@ bool lsp_init(LspClient *lsp, const char *server_cmd, const char *root_path)
     lsp->rx_buf = malloc(lsp->rx_cap);
     if (!lsp->rx_buf) return false;
     lsp->rx_len = 0;
+
+    lsp->tx_cap = LSP_BUFFER_SIZE;
+    lsp->tx_buf = malloc(lsp->tx_cap);
+    lsp->esc_cap = LSP_BUFFER_SIZE;
+    lsp->esc_buf = malloc(lsp->esc_cap);
 
     /* Create bidirectional pipes */
     int to_child[2];
@@ -396,6 +412,13 @@ void lsp_destroy(LspClient *lsp)
     lsp->rx_buf = NULL;
     lsp->rx_len = 0;
     lsp->rx_cap = 0;
+
+    free(lsp->tx_buf);
+    lsp->tx_buf = NULL;
+    lsp->tx_cap = 0;
+    free(lsp->esc_buf);
+    lsp->esc_buf = NULL;
+    lsp->esc_cap = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -409,22 +432,20 @@ void lsp_doc_did_open(LspClient *lsp, const char *path, const char *text, size_t
     char uri[LSP_MAX_PATH];
     path_to_uri(path, uri, sizeof(uri));
 
-    size_t esc_cap = len * 2 + 512;
-    char *esc = malloc(esc_cap);
-    if (!esc) return;
-    escape_json_string(text ? text : "", esc, esc_cap);
+    size_t esc_needed = len * 2 + 512;
+    lsp_ensure_buf_capacity(&lsp->esc_buf, &lsp->esc_cap, esc_needed);
+    if (!lsp->esc_buf) return;
+    escape_json_string(text ? text : "", lsp->esc_buf, lsp->esc_cap);
 
-    size_t payload_cap = esc_cap + 1024;
-    char *payload = malloc(payload_cap);
-    if (payload) {
-        snprintf(payload, payload_cap,
-                 "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{"
-                 "\"textDocument\":{\"uri\":\"%s\",\"languageId\":\"c\",\"version\":%d,\"text\":\"%s\"}}}",
-                 uri, lsp->doc_version++, esc);
-        lsp_send_payload(lsp, payload);
-        free(payload);
-    }
-    free(esc);
+    size_t payload_needed = esc_needed + 1024;
+    lsp_ensure_buf_capacity(&lsp->tx_buf, &lsp->tx_cap, payload_needed);
+    if (!lsp->tx_buf) return;
+
+    snprintf(lsp->tx_buf, lsp->tx_cap,
+             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{"
+             "\"textDocument\":{\"uri\":\"%s\",\"languageId\":\"c\",\"version\":%d,\"text\":\"%s\"}}}",
+             uri, lsp->doc_version++, lsp->esc_buf);
+    lsp_send_payload(lsp, lsp->tx_buf);
 }
 
 void lsp_doc_did_change(LspClient *lsp, const char *path, const char *text, size_t len)
@@ -434,23 +455,21 @@ void lsp_doc_did_change(LspClient *lsp, const char *path, const char *text, size
     char uri[LSP_MAX_PATH];
     path_to_uri(path, uri, sizeof(uri));
 
-    size_t esc_cap = len * 2 + 512;
-    char *esc = malloc(esc_cap);
-    if (!esc) return;
-    escape_json_string(text ? text : "", esc, esc_cap);
+    size_t esc_needed = len * 2 + 512;
+    lsp_ensure_buf_capacity(&lsp->esc_buf, &lsp->esc_cap, esc_needed);
+    if (!lsp->esc_buf) return;
+    escape_json_string(text ? text : "", lsp->esc_buf, lsp->esc_cap);
 
-    size_t payload_cap = esc_cap + 1024;
-    char *payload = malloc(payload_cap);
-    if (payload) {
-        snprintf(payload, payload_cap,
-                 "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{"
-                 "\"textDocument\":{\"uri\":\"%s\",\"version\":%d},"
-                 "\"contentChanges\":[{\"text\":\"%s\"}]}}",
-                 uri, lsp->doc_version++, esc);
-        lsp_send_payload(lsp, payload);
-        free(payload);
-    }
-    free(esc);
+    size_t payload_needed = esc_needed + 1024;
+    lsp_ensure_buf_capacity(&lsp->tx_buf, &lsp->tx_cap, payload_needed);
+    if (!lsp->tx_buf) return;
+
+    snprintf(lsp->tx_buf, lsp->tx_cap,
+             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{"
+             "\"textDocument\":{\"uri\":\"%s\",\"version\":%d},"
+             "\"contentChanges\":[{\"text\":\"%s\"}]}}",
+             uri, lsp->doc_version++, lsp->esc_buf);
+    lsp_send_payload(lsp, lsp->tx_buf);
 }
 
 void lsp_doc_did_save(LspClient *lsp, const char *path)
@@ -640,9 +659,43 @@ static void handle_publish_diagnostics(LspClient *lsp, const char *msg)
     }
 }
 
+void lsp_filter_completions(LspClient *lsp, const char *prefix)
+{
+    if (!lsp) return;
+    lsp->completion_count = 0;
+    if (prefix) {
+        snprintf(lsp->completion_prefix, sizeof(lsp->completion_prefix), "%s", prefix);
+    } else {
+        lsp->completion_prefix[0] = '\0';
+    }
+
+    size_t plen = strlen(lsp->completion_prefix);
+
+    /* Phase 1: Exact prefix matches (case-insensitive) */
+    for (int i = 0; i < lsp->raw_completion_count && lsp->completion_count < LSP_MAX_COMPLETIONS; ++i) {
+        const LspCompletionItem *raw = &lsp->raw_completions[i];
+        if (plen == 0 || strncasecmp(raw->label, lsp->completion_prefix, plen) == 0) {
+            lsp->completions[lsp->completion_count++] = *raw;
+        }
+    }
+
+    /* Phase 2: Substring matches (case-insensitive) if room and prefix >= 2 */
+    if (plen >= 2 && lsp->completion_count < LSP_MAX_COMPLETIONS) {
+        for (int i = 0; i < lsp->raw_completion_count && lsp->completion_count < LSP_MAX_COMPLETIONS; ++i) {
+            const LspCompletionItem *raw = &lsp->raw_completions[i];
+            if (strncasecmp(raw->label, lsp->completion_prefix, plen) == 0) continue;
+
+            if (strcasestr(raw->label, lsp->completion_prefix) != NULL) {
+                lsp->completions[lsp->completion_count++] = *raw;
+            }
+        }
+    }
+}
+
 static void handle_completion_response(LspClient *lsp, const char *msg, App *app)
 {
     lsp->completion_pending = false;
+    lsp->raw_completion_count = 0;
     lsp->completion_count = 0;
 
     const char *result = json_find_property(msg, "result");
@@ -657,57 +710,87 @@ static void handle_completion_response(LspClient *lsp, const char *msg, App *app
     if (*items != '[') return;
 
     const char *p = items + 1;
-    while (*p && *p != ']' && lsp->completion_count < LSP_MAX_COMPLETIONS) {
+    while (*p && *p != ']' && lsp->raw_completion_count < LSP_MAX_RAW_COMPLETIONS) {
         p = json_skip_ws(p);
         if (*p != '{') break;
 
-        const char *obj = p;
-        LspCompletionItem *item = &lsp->completions[lsp->completion_count];
+        LspCompletionItem *item = &lsp->raw_completions[lsp->raw_completion_count];
         memset(item, 0, sizeof(*item));
 
-        const char *label = json_object_get(obj, "label");
-        if (label) json_parse_str(label, item->label, sizeof(item->label));
+        p++; /* skip '{' */
+        while (*p && *p != '}') {
+            p = json_skip_ws(p);
+            if (*p == '\"') {
+                p++;
+                const char *kstart = p;
+                while (*p && *p != '\"') p++;
+                size_t klen = (size_t)(p - kstart);
+                if (*p == '\"') p++;
+                p = json_skip_ws(p);
+                if (*p == ':') p++;
+                p = json_skip_ws(p);
 
-        const char *kind = json_object_get(obj, "kind");
-        if (kind) item->kind = (LspCompletionKind)json_parse_int(kind);
+                if (klen == 5 && memcmp(kstart, "label", 5) == 0) {
+                    json_parse_str(p, item->label, sizeof(item->label));
+                    p = json_skip_value(p);
+                } else if (klen == 4 && memcmp(kstart, "kind", 4) == 0) {
+                    item->kind = (LspCompletionKind)atoi(p);
+                    p = json_skip_value(p);
+                } else if (klen == 6 && memcmp(kstart, "detail", 6) == 0) {
+                    json_parse_str(p, item->detail, sizeof(item->detail));
+                    p = json_skip_value(p);
+                } else if (klen == 10 && memcmp(kstart, "insertText", 10) == 0) {
+                    json_parse_str(p, item->insert_text, sizeof(item->insert_text));
+                    p = json_skip_value(p);
+                } else if (klen == 13 && memcmp(kstart, "documentation", 13) == 0) {
+                    if (*p == '\"') {
+                        json_parse_str(p, item->documentation, sizeof(item->documentation));
+                    } else if (*p == '{') {
+                        const char *val = json_object_get(p, "value");
+                        if (val) json_parse_str(val, item->documentation, sizeof(item->documentation));
+                    }
+                    p = json_skip_value(p);
+                } else {
+                    p = json_skip_value(p);
+                }
 
-        const char *detail = json_object_get(obj, "detail");
-        if (detail) json_parse_str(detail, item->detail, sizeof(item->detail));
-
-        const char *insert = json_object_get(obj, "insertText");
-        if (insert)
-            json_parse_str(insert, item->insert_text, sizeof(item->insert_text));
-        else
-            snprintf(item->insert_text, sizeof(item->insert_text), "%s", item->label);
-
-        const char *doc = json_object_get(obj, "documentation");
-        if (doc) {
-            if (*doc == '{') {
-                const char *val = json_object_get(doc, "value");
-                if (val) json_parse_str(val, item->documentation, sizeof(item->documentation));
+                p = json_skip_ws(p);
+                if (*p == ',') p++;
             } else {
-                json_parse_str(doc, item->documentation, sizeof(item->documentation));
+                p++;
             }
         }
+        if (*p == '}') p++;
 
-        if (item->label[0])
-            lsp->completion_count++;
+        if (item->label[0]) {
+            if (!item->insert_text[0]) {
+                snprintf(item->insert_text, sizeof(item->insert_text), "%s", item->label);
+            }
+            lsp->raw_completion_count++;
+        }
 
-        p = json_skip_value(obj);
         p = json_skip_ws(p);
         if (*p == ',') p++;
     }
 
-    if (app && lsp->completion_count > 0) {
+    if (app) {
         Editor *ed = app_ed(app);
         if (ed) {
-            float cx = 0, cy = 0;
-            editor_caret_pixel_pos(ed, &cx, &cy);
-            app->completion_anchor_x = cx;
-            app->completion_anchor_y = cy;
-            app->completion_open = true;
-            app->completion_sel = 0;
-            app->completion_scroll = 0;
+            char prefix[64] = {0};
+            editor_current_word_prefix(ed, prefix, sizeof(prefix));
+            lsp_filter_completions(lsp, prefix);
+
+            if (lsp->completion_count > 0) {
+                float cx = 0, cy = 0;
+                editor_caret_pixel_pos(ed, &cx, &cy);
+                app->completion_anchor_x = cx;
+                app->completion_anchor_y = cy;
+                app->completion_open = true;
+                app->completion_sel = 0;
+                app->completion_scroll = 0;
+            } else {
+                app->completion_open = false;
+            }
         }
     }
 }
@@ -995,6 +1078,47 @@ const char *lsp_completion_kind_badge(LspCompletionKind kind)
 /* Overlay Rendering: Completion Popup & Hover Tooltip               */
 /* ------------------------------------------------------------------ */
 
+static void truncate_text_to_width(const Font *font, const char *src, float max_w, char *out, size_t out_cap)
+{
+    if (!font || !src || out_cap == 0) {
+        if (out && out_cap > 0) out[0] = '\0';
+        return;
+    }
+    if (max_w <= 0.0f) {
+        out[0] = '\0';
+        return;
+    }
+    float full_w = font_measure(font, src);
+    if (full_w <= max_w) {
+        snprintf(out, out_cap, "%s", src);
+        return;
+    }
+
+    const char *ellipsis = "…";
+    float ell_w = font_measure(font, ellipsis);
+    float avail = max_w - ell_w;
+    if (avail <= 0.0f) {
+        snprintf(out, out_cap, "…");
+        return;
+    }
+
+    size_t len = strlen(src);
+    size_t best_i = 0;
+    float cur_w = 0.0f;
+    for (size_t i = 0; i < len; ++i) {
+        char tmp[2] = { src[i], '\0' };
+        float cw = font_measure(font, tmp);
+        if (cur_w + cw > avail) break;
+        cur_w += cw;
+        best_i = i + 1;
+    }
+
+    if (best_i >= out_cap - 4) best_i = out_cap - 5;
+    memcpy(out, src, best_i);
+    out[best_i] = '\0';
+    strncat(out, ellipsis, out_cap - strlen(out) - 1);
+}
+
 void lsp_draw_ui(App *app, VkContext *ctx)
 {
     if (!app || !ctx) return;
@@ -1003,16 +1127,43 @@ void lsp_draw_ui(App *app, VkContext *ctx)
 
     /* 1. Autocompletion Floating Popup */
     if (app->completion_open && lsp->completion_count > 0) {
-        float x = app->completion_anchor_x;
-        float y = app->completion_anchor_y + 4.0f;
-        float w = 360.0f;
-        float row_h = app->font.line_height + 4.0f;
-
-        int visible_rows = lsp->completion_count > 8 ? 8 : lsp->completion_count;
-        float h = (float)visible_rows * row_h + 8.0f;
-
         float screen_w = (float)ctx->swapchain_extent.width;
         float screen_h = (float)ctx->swapchain_extent.height;
+
+        int visible_rows = lsp->completion_count > 8 ? 8 : lsp->completion_count;
+        int scroll = app->completion_scroll;
+        if (app->completion_sel < scroll) scroll = app->completion_sel;
+        if (app->completion_sel >= scroll + visible_rows) scroll = app->completion_sel - visible_rows + 1;
+        if (scroll < 0) scroll = 0;
+        app->completion_scroll = scroll;
+
+        /* Dynamically measure visible items to calculate optimal popup width */
+        float max_lbl_w = 0.0f;
+        float max_det_w = 0.0f;
+        for (int r = 0; r < visible_rows; ++r) {
+            int idx = scroll + r;
+            if (idx >= lsp->completion_count) break;
+            const LspCompletionItem *it = &lsp->completions[idx];
+            float lw = font_measure(&app->font, it->label);
+            if (lw > max_lbl_w) max_lbl_w = lw;
+            if (it->detail[0]) {
+                float dw = font_measure(&app->font, it->detail);
+                if (dw > max_det_w) max_det_w = dw;
+            }
+        }
+
+        /* Desired width: badge (42px) + label + gap + detail + padding */
+        float desired_w = 46.0f + max_lbl_w + (max_det_w > 0.0f ? max_det_w + 32.0f : 24.0f);
+        float w = desired_w;
+        if (w < 340.0f) w = 340.0f;
+        if (w > 560.0f) w = 560.0f;
+        if (w > screen_w - 24.0f) w = screen_w - 24.0f;
+
+        float row_h = app->font.line_height + 4.0f;
+        float h = (float)visible_rows * row_h + 8.0f;
+
+        float x = app->completion_anchor_x;
+        float y = app->completion_anchor_y + 4.0f;
 
         if (x + w > screen_w - 12.0f) x = screen_w - w - 12.0f;
         if (y + h > screen_h - 32.0f) y = app->completion_anchor_y - h - 4.0f;
@@ -1020,18 +1171,17 @@ void lsp_draw_ui(App *app, VkContext *ctx)
         if (y < 32.0f) y = 32.0f;
 
         /* Background & border */
-        uint8_t bg[4] = { 32, 34, 40, 245 };
-        uint8_t border[4] = { 70, 75, 85, 255 };
+        uint8_t bg[4] = { 28, 30, 36, 250 };
+        uint8_t border[4] = { 65, 70, 80, 255 };
         vk_draw_rounded_rect(&app->draw, x, y, w, h, 6.0f, 1.0f, bg);
         vk_draw_rounded_rect(&app->draw, x, y, w, 1.0f, 0.0f, 1.0f, border);
         vk_draw_rounded_rect(&app->draw, x, y + h - 1.0f, w, 1.0f, 0.0f, 1.0f, border);
         vk_draw_rounded_rect(&app->draw, x, y, 1.0f, h, 0.0f, 1.0f, border);
         vk_draw_rounded_rect(&app->draw, x + w - 1.0f, y, 1.0f, h, 0.0f, 1.0f, border);
 
-        int scroll = app->completion_scroll;
-        if (app->completion_sel < scroll) scroll = app->completion_sel;
-        if (app->completion_sel >= scroll + visible_rows) scroll = app->completion_sel - visible_rows + 1;
-        app->completion_scroll = scroll;
+        float content_x = x + 42.0f;
+        float right_edge = x + w - 10.0f;
+        float avail_w = right_edge - content_x;
 
         float row_y = y + 4.0f;
         for (int r = 0; r < visible_rows; ++r) {
@@ -1042,27 +1192,37 @@ void lsp_draw_ui(App *app, VkContext *ctx)
             bool selected = (idx == app->completion_sel);
 
             if (selected) {
-                uint8_t sel_bg[4] = { 60, 110, 200, 180 };
+                uint8_t sel_bg[4] = { 60, 110, 200, 200 };
                 vk_draw_rounded_rect(&app->draw, x + 4.0f, row_y, w - 8.0f, row_h, 4.0f, 1.0f, sel_bg);
             }
 
             /* Badge icon */
             const char *badge = lsp_completion_kind_badge(it->kind);
             uint8_t badge_c[4] = { 130, 180, 250, 255 };
-            font_draw(&app->font, ctx, x + 10.0f, row_y + app->font.ascent + 2.0f, badge, badge_c);
+            font_draw(&app->font, ctx, x + 8.0f, row_y + app->font.ascent + 2.0f, badge, badge_c);
 
-            /* Label */
-            uint8_t label_c[4] = { 240, 240, 240, 255 };
-            font_draw(&app->font, ctx, x + 50.0f, row_y + app->font.ascent + 2.0f, it->label, label_c);
+            /* Format label and detail with strict width bounds */
+            char draw_label[128];
+            char draw_detail[128];
 
-            /* Detail text */
             if (it->detail[0]) {
-                uint8_t dim_c[4] = { 150, 155, 165, 200 };
-                char short_detail[128];
-                snprintf(short_detail, sizeof(short_detail), "%s", it->detail);
-                float dw = font_measure(&app->font, short_detail);
-                if (x + w - dw - 12.0f > x + 180.0f)
-                    font_draw(&app->font, ctx, x + w - dw - 12.0f, row_y + app->font.ascent + 2.0f, short_detail, dim_c);
+                float max_d_w = avail_w * 0.45f;
+                truncate_text_to_width(&app->font, it->detail, max_d_w, draw_detail, sizeof(draw_detail));
+                float actual_d_w = font_measure(&app->font, draw_detail);
+
+                float max_l_w = avail_w - actual_d_w - 12.0f;
+                truncate_text_to_width(&app->font, it->label, max_l_w, draw_label, sizeof(draw_label));
+
+                uint8_t label_c[4] = { 240, 240, 240, 255 };
+                font_draw(&app->font, ctx, content_x, row_y + app->font.ascent + 2.0f, draw_label, label_c);
+
+                uint8_t dim_c[4] = { 150, 155, 165, 210 };
+                float detail_x = right_edge - actual_d_w;
+                font_draw(&app->font, ctx, detail_x, row_y + app->font.ascent + 2.0f, draw_detail, dim_c);
+            } else {
+                truncate_text_to_width(&app->font, it->label, avail_w, draw_label, sizeof(draw_label));
+                uint8_t label_c[4] = { 240, 240, 240, 255 };
+                font_draw(&app->font, ctx, content_x, row_y + app->font.ascent + 2.0f, draw_label, label_c);
             }
 
             row_y += row_h;
@@ -1143,6 +1303,7 @@ bool lsp_handle_event(App *app, const SDL_Event *ev)
 
         if (key == SDLK_ESCAPE) {
             app->completion_open = false;
+            app->completion_req_pending = false;
             return true;
         }
 
@@ -1190,6 +1351,7 @@ bool lsp_handle_event(App *app, const SDL_Event *ev)
 
     if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         app->completion_open = false;
+        app->completion_req_pending = false;
     }
 
     return false;

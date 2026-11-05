@@ -551,17 +551,49 @@ static void cmd_toggle_soft_wrap(App *app)
         app->tabs[i].soft_wrap = app->soft_wrap;
 }
 
+static void on_editor_text_changed(App *app, Editor *ed)
+{
+    if (!app || !ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+
+    char prefix[64] = {0};
+    size_t plen = editor_current_word_prefix(ed, prefix, sizeof(prefix));
+
+    if (plen == 0) {
+        /* User deleted what triggered completion or cursor is on whitespace/punctuation */
+        app->completion_open = false;
+        app->completion_req_pending = false;
+        return;
+    }
+
+    /* Fast in-memory filtering: 0ms instant update as user types or backspaces */
+    if (app->completion_open && app->lsp.raw_completion_count > 0) {
+        lsp_filter_completions(&app->lsp, prefix);
+        if (app->lsp.completion_count > 0) {
+            float cx = 0, cy = 0;
+            editor_caret_pixel_pos(ed, &cx, &cy);
+            app->completion_anchor_x = cx;
+            app->completion_anchor_y = cy;
+            app->completion_sel = 0;
+            app->completion_scroll = 0;
+        } else {
+            app->completion_open = false;
+        }
+    }
+
+    /* Debounce completion request to language server (80ms) */
+    app->completion_req_pending = true;
+    app->completion_debounce_ms = SDL_GetTicks() + 80;
+}
+
 static void cmd_lsp_complete(App *app)
 {
     Editor *ed = app_ed(app);
-    if (!ed || !ed->path[0]) return;
+    if (!ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+    editor_flush_lsp_sync(ed);
     float cx = 0, cy = 0;
     editor_caret_pixel_pos(ed, &cx, &cy);
     app->completion_anchor_x = cx;
     app->completion_anchor_y = cy;
-    app->completion_open = true;
-    app->completion_sel = 0;
-    app->completion_scroll = 0;
     lsp_request_completion(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
 }
 
@@ -797,8 +829,27 @@ int main(int argc, char **argv)
     while (app.running) {
         lsp_update(&app);
 
-        /* Automatic mouse hover dwell (shows hover card when mouse rests on a symbol) */
         uint64_t now_ticks = SDL_GetTicks();
+
+        /* Debounced autocompletion request */
+        if (app.completion_req_pending && now_ticks >= app.completion_debounce_ms) {
+            app.completion_req_pending = false;
+            Editor *ed = app_ed(&app);
+            if (ed && ed->path[0] && app.lsp.state == LSP_STATE_RUNNING) {
+                char prefix[64] = {0};
+                size_t plen = editor_current_word_prefix(ed, prefix, sizeof(prefix));
+                if (plen > 0 || app.completion_open) {
+                    editor_flush_lsp_sync(ed);
+                    float cx = 0, cy = 0;
+                    editor_caret_pixel_pos(ed, &cx, &cy);
+                    app.completion_anchor_x = cx;
+                    app.completion_anchor_y = cy;
+                    lsp_request_completion(&app.lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+                }
+            }
+        }
+
+        /* Automatic mouse hover dwell (shows hover card when mouse rests on a symbol) */
         Editor *hover_ed = app_ed(&app);
         if (hover_ed && hover_ed->path[0] && app.lsp.state == LSP_STATE_RUNNING &&
             !app.hover_open && !app.completion_open &&
@@ -1052,26 +1103,28 @@ int main(int argc, char **argv)
                 Editor *ed = app_ed(&app);
                 if (ed) {
                     editor_handle_event(ed, &ev);
-                    /* Automatic auto-suggestion trigger as user types identifiers or accessors */
-                    if (ed->path[0] && app.lsp.state == LSP_STATE_RUNNING) {
-                        const char *txt = ev.text.text;
-                        char ch = txt ? txt[0] : 0;
-                        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-                            (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '>') {
-                            float cx = 0, cy = 0;
-                            editor_caret_pixel_pos(ed, &cx, &cy);
-                            app.completion_anchor_x = cx;
-                            app.completion_anchor_y = cy;
-                            lsp_request_completion(&app.lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
-                        }
-                    }
+                    on_editor_text_changed(&app, ed);
                 }
                 continue;
             }
 
             {
                 Editor *ed = app_ed(&app);
-                if (ed) editor_handle_event(ed, &ev);
+                if (ed) {
+                    editor_handle_event(ed, &ev);
+                    if (ev.type == SDL_EVENT_KEY_DOWN) {
+                        SDL_Keycode k = ev.key.key;
+                        if (k == SDLK_BACKSPACE || k == SDLK_DELETE) {
+                            on_editor_text_changed(&app, ed);
+                        } else if (k == SDLK_LEFT || k == SDLK_RIGHT ||
+                                   k == SDLK_HOME || k == SDLK_END) {
+                            if (app.completion_open) {
+                                app.completion_open = false;
+                                app.completion_req_pending = false;
+                            }
+                        }
+                    }
+                }
             }
         }
 

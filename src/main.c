@@ -632,6 +632,7 @@ static void cmd_lsp_sig_help(App *app)
 {
     Editor *ed = app_ed(app);
     if (!ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+    editor_flush_lsp_sync(ed);
     float cx = 0, cy = 0;
     editor_caret_pixel_pos(ed, &cx, &cy);
     app->sig_help_x = cx;
@@ -1131,6 +1132,11 @@ int main(int argc, char **argv)
                     on_editor_text_changed(&app, ed);
                     const char *txt = ev.text.text;
                     if (txt && (strchr(txt, '(') || strchr(txt, ','))) {
+                        cmd_lsp_sig_help(&app);
+                    } else if (txt && strchr(txt, ')')) {
+                        app.sig_help_open = false;
+                        app.lsp.sig_help.active = false;
+                    } else if (app.sig_help_open) {
                         cmd_lsp_sig_help(&app);
                     }
                 }

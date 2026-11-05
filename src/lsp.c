@@ -368,6 +368,9 @@ bool lsp_init(LspClient *lsp, const char *server_cmd, const char *root_path)
              "\"synchronization\":{\"dynamicRegistration\":false,\"willSave\":false,\"willSaveWaitUntil\":false,\"didSave\":true},"
              "\"completion\":{\"completionItem\":{\"snippetSupport\":false,\"documentationFormat\":[\"plaintext\"]}},"
              "\"hover\":{\"contentFormat\":[\"plaintext\"]},"
+             "\"signatureHelp\":{\"dynamicRegistration\":false,\"signatureInformation\":{\"documentationFormat\":[\"plaintext\"],\"parameterInformation\":{\"labelOffsetSupport\":true}}},"
+             "\"references\":{\"dynamicRegistration\":false},"
+             "\"rename\":{\"dynamicRegistration\":false,\"prepareSupport\":false},"
              "\"definition\":{\"dynamicRegistration\":false},"
              "\"formatting\":{\"dynamicRegistration\":false}"
              "}}}}",
@@ -581,7 +584,8 @@ void lsp_request_signature_help(LspClient *lsp, const char *path, int line, int 
     snprintf(req, sizeof(req),
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/signatureHelp\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"},"
-             "\"position\":{\"line\":%d,\"character\":%d}}}",
+             "\"position\":{\"line\":%d,\"character\":%d},"
+             "\"context\":{\"triggerKind\":1,\"isRetrigger\":false}}}",
              id, uri, line > 0 ? line - 1 : 0, col > 0 ? col - 1 : 0);
     lsp_send_payload(lsp, req);
 }

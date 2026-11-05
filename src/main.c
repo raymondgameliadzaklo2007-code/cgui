@@ -797,6 +797,25 @@ int main(int argc, char **argv)
     while (app.running) {
         lsp_update(&app);
 
+        /* Automatic mouse hover dwell (shows hover card when mouse rests on a symbol) */
+        uint64_t now_ticks = SDL_GetTicks();
+        Editor *hover_ed = app_ed(&app);
+        if (hover_ed && hover_ed->path[0] && app.lsp.state == LSP_STATE_RUNNING &&
+            !app.hover_open && !app.completion_open &&
+            now_ticks - app.last_mouse_move_ms >= 350 &&
+            now_ticks - app.last_mouse_move_ms < 600) {
+            int h_line = 0, h_col = 0;
+            if (editor_line_col_at_point(hover_ed, app.mouse_x, app.mouse_y, &h_line, &h_col)) {
+                if (h_line != app.hover_req_line || h_col != app.hover_req_col) {
+                    app.hover_req_line = h_line;
+                    app.hover_req_col = h_col;
+                    app.hover_x = app.mouse_x;
+                    app.hover_y = app.mouse_y;
+                    lsp_request_hover(&app.lsp, hover_ed->path, h_line, h_col);
+                }
+            }
+        }
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_EVENT_QUIT ||
@@ -1016,6 +1035,39 @@ int main(int argc, char **argv)
                 project_handle_wheel(&app, ev.wheel.y, 28.0f, 26.0f,
                                      (float)app.vk.swapchain_extent.height))
                 continue;
+
+            if (ev.type == SDL_EVENT_MOUSE_MOTION) {
+                float dx = (float)ev.motion.x - app.mouse_x;
+                float dy = (float)ev.motion.y - app.mouse_y;
+                app.mouse_x = (float)ev.motion.x;
+                app.mouse_y = (float)ev.motion.y;
+                app.last_mouse_move_ms = SDL_GetTicks();
+                if (app.hover_open && (dx * dx + dy * dy > 64.0f)) {
+                    app.hover_open = false;
+                    app.lsp.hover.active = false;
+                }
+            }
+
+            if (ev.type == SDL_EVENT_TEXT_INPUT) {
+                Editor *ed = app_ed(&app);
+                if (ed) {
+                    editor_handle_event(ed, &ev);
+                    /* Automatic auto-suggestion trigger as user types identifiers or accessors */
+                    if (ed->path[0] && app.lsp.state == LSP_STATE_RUNNING) {
+                        const char *txt = ev.text.text;
+                        char ch = txt ? txt[0] : 0;
+                        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                            (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '>') {
+                            float cx = 0, cy = 0;
+                            editor_caret_pixel_pos(ed, &cx, &cy);
+                            app.completion_anchor_x = cx;
+                            app.completion_anchor_y = cy;
+                            lsp_request_completion(&app.lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+                        }
+                    }
+                }
+                continue;
+            }
 
             {
                 Editor *ed = app_ed(&app);

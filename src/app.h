@@ -153,6 +153,11 @@ typedef struct App {
     bool      hover_open;
     float     hover_x;
     float     hover_y;
+    float     mouse_x;
+    float     mouse_y;
+    uint64_t  last_mouse_move_ms;
+    int       hover_req_line;
+    int       hover_req_col;
 } App;
 
 /* Implemented in main.c */

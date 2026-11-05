@@ -55,6 +55,120 @@ static const char *json_find_property(const char *json, const char *key)
     return NULL;
 }
 
+static const char *json_skip_value(const char *p)
+{
+    p = json_skip_ws(p);
+    if (!*p) return p;
+    if (*p == '\"') {
+        p++;
+        while (*p) {
+            if (*p == '\\' && *(p + 1)) p += 2;
+            else if (*p == '\"') { p++; break; }
+            else p++;
+        }
+        return p;
+    }
+    if (*p == '{') {
+        p++;
+        int depth = 1;
+        while (*p && depth > 0) {
+            p = json_skip_ws(p);
+            if (*p == '\"') {
+                p = json_skip_value(p);
+            } else if (*p == '{') {
+                depth++; p++;
+            } else if (*p == '}') {
+                depth--; p++;
+            } else {
+                p++;
+            }
+        }
+        return p;
+    }
+    if (*p == '[') {
+        p++;
+        int depth = 1;
+        while (*p && depth > 0) {
+            p = json_skip_ws(p);
+            if (*p == '\"') {
+                p = json_skip_value(p);
+            } else if (*p == '[') {
+                depth++; p++;
+            } else if (*p == ']') {
+                depth--; p++;
+            } else {
+                p++;
+            }
+        }
+        return p;
+    }
+    while (*p && *p != ',' && *p != '}' && *p != ']' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r')
+        p++;
+    return p;
+}
+
+static const char *json_object_get(const char *obj, const char *key)
+{
+    if (!obj || !key) return NULL;
+    obj = json_skip_ws(obj);
+    if (*obj != '{') return NULL;
+    const char *p = obj + 1;
+    size_t klen = strlen(key);
+
+    while (*p && *p != '}') {
+        p = json_skip_ws(p);
+        if (*p == '\"') {
+            const char *kstart = p + 1;
+            const char *kend = strchr(kstart, '\"');
+            if (!kend) break;
+            size_t len = (size_t)(kend - kstart);
+            p = json_skip_ws(kend + 1);
+            if (*p != ':') break;
+            p = json_skip_ws(p + 1);
+
+            if (len == klen && memcmp(kstart, key, klen) == 0) {
+                return p;
+            }
+            p = json_skip_value(p);
+            p = json_skip_ws(p);
+            if (*p == ',') p++;
+        } else {
+            p++;
+        }
+    }
+    return NULL;
+}
+
+static void clean_hover_markdown(char *str)
+{
+    if (!str || !*str) return;
+    char out[512];
+    size_t o = 0;
+    size_t i = 0;
+
+    while (str[i] && o + 1 < sizeof(out)) {
+        if (strncmp(str + i, "```", 3) == 0) {
+            i += 3;
+            while (str[i] && str[i] != '\n') i++;
+            if (str[i] == '\n') i++;
+            continue;
+        }
+        if (str[i] == '`') {
+            i++;
+            continue;
+        }
+        out[o++] = str[i++];
+    }
+    out[o] = '\0';
+
+    char *start = out;
+    while (*start == '\n' || *start == '\r' || *start == ' ') start++;
+    char *end = start + strlen(start);
+    while (end > start && (*(end - 1) == '\n' || *(end - 1) == '\r' || *(end - 1) == ' ')) end--;
+    *end = '\0';
+    memmove(str, start, (size_t)(end - start + 1));
+}
+
 static bool json_parse_str(const char *val, char *out, size_t out_cap)
 {
     if (!val || *val != '\"') return false;
@@ -526,7 +640,7 @@ static void handle_publish_diagnostics(LspClient *lsp, const char *msg)
     }
 }
 
-static void handle_completion_response(LspClient *lsp, const char *msg)
+static void handle_completion_response(LspClient *lsp, const char *msg, App *app)
 {
     lsp->completion_pending = false;
     lsp->completion_count = 0;
@@ -536,9 +650,10 @@ static void handle_completion_response(LspClient *lsp, const char *msg)
 
     const char *items = result;
     if (*result == '{') {
-        const char *sub = json_find_property(result, "items");
+        const char *sub = json_object_get(result, "items");
         if (sub) items = sub;
     }
+    items = json_skip_ws(items);
     if (*items != '[') return;
 
     const char *p = items + 1;
@@ -546,28 +661,29 @@ static void handle_completion_response(LspClient *lsp, const char *msg)
         p = json_skip_ws(p);
         if (*p != '{') break;
 
+        const char *obj = p;
         LspCompletionItem *item = &lsp->completions[lsp->completion_count];
         memset(item, 0, sizeof(*item));
 
-        const char *label = json_find_property(p, "label");
+        const char *label = json_object_get(obj, "label");
         if (label) json_parse_str(label, item->label, sizeof(item->label));
 
-        const char *kind = json_find_property(p, "kind");
+        const char *kind = json_object_get(obj, "kind");
         if (kind) item->kind = (LspCompletionKind)json_parse_int(kind);
 
-        const char *detail = json_find_property(p, "detail");
+        const char *detail = json_object_get(obj, "detail");
         if (detail) json_parse_str(detail, item->detail, sizeof(item->detail));
 
-        const char *insert = json_find_property(p, "insertText");
+        const char *insert = json_object_get(obj, "insertText");
         if (insert)
             json_parse_str(insert, item->insert_text, sizeof(item->insert_text));
         else
             snprintf(item->insert_text, sizeof(item->insert_text), "%s", item->label);
 
-        const char *doc = json_find_property(p, "documentation");
+        const char *doc = json_object_get(obj, "documentation");
         if (doc) {
             if (*doc == '{') {
-                const char *val = json_find_property(doc, "value");
+                const char *val = json_object_get(doc, "value");
                 if (val) json_parse_str(val, item->documentation, sizeof(item->documentation));
             } else {
                 json_parse_str(doc, item->documentation, sizeof(item->documentation));
@@ -577,42 +693,53 @@ static void handle_completion_response(LspClient *lsp, const char *msg)
         if (item->label[0])
             lsp->completion_count++;
 
-        int depth = 0;
-        while (*p) {
-            if (*p == '{') depth++;
-            else if (*p == '}') {
-                depth--;
-                if (depth == 0) { p++; break; }
-            }
-            p++;
-        }
+        p = json_skip_value(obj);
         p = json_skip_ws(p);
         if (*p == ',') p++;
     }
+
+    if (app && lsp->completion_count > 0) {
+        Editor *ed = app_ed(app);
+        if (ed) {
+            float cx = 0, cy = 0;
+            editor_caret_pixel_pos(ed, &cx, &cy);
+            app->completion_anchor_x = cx;
+            app->completion_anchor_y = cy;
+            app->completion_open = true;
+            app->completion_sel = 0;
+            app->completion_scroll = 0;
+        }
+    }
 }
 
-static void handle_hover_response(LspClient *lsp, const char *msg)
+static void handle_hover_response(LspClient *lsp, const char *msg, App *app)
 {
     const char *result = json_find_property(msg, "result");
     if (!result || strncmp(result, "null", 4) == 0) {
         lsp->hover.active = false;
+        if (app) app->hover_open = false;
         return;
     }
 
-    const char *contents = json_find_property(result, "contents");
+    const char *contents = json_object_get(result, "contents");
+    if (!contents) {
+        contents = json_find_property(result, "contents");
+    }
     if (!contents) {
         lsp->hover.active = false;
+        if (app) app->hover_open = false;
         return;
     }
 
     char raw[512] = {0};
+    contents = json_skip_ws(contents);
     if (*contents == '{') {
-        const char *val = json_find_property(contents, "value");
+        const char *val = json_object_get(contents, "value");
         if (val) json_parse_str(val, raw, sizeof(raw));
     } else if (*contents == '[') {
         const char *first = json_skip_ws(contents + 1);
         if (*first == '{') {
-            const char *val = json_find_property(first, "value");
+            const char *val = json_object_get(first, "value");
             if (val) json_parse_str(val, raw, sizeof(raw));
         } else if (*first == '\"') {
             json_parse_str(first, raw, sizeof(raw));
@@ -621,11 +748,26 @@ static void handle_hover_response(LspClient *lsp, const char *msg)
         json_parse_str(contents, raw, sizeof(raw));
     }
 
+    clean_hover_markdown(raw);
+
     if (raw[0]) {
         snprintf(lsp->hover.content, sizeof(lsp->hover.content), "%s", raw);
         lsp->hover.active = true;
+        if (app) {
+            app->hover_open = true;
+            if (app->hover_x == 0.0f && app->hover_y == 0.0f) {
+                Editor *ed = app_ed(app);
+                if (ed) {
+                    float cx = 0, cy = 0;
+                    editor_caret_pixel_pos(ed, &cx, &cy);
+                    app->hover_x = cx;
+                    app->hover_y = cy;
+                }
+            }
+        }
     } else {
         lsp->hover.active = false;
+        if (app) app->hover_open = false;
     }
 }
 
@@ -727,9 +869,9 @@ static void process_lsp_message(LspClient *lsp, const char *json, App *app)
     /* Requests matched by ID */
     if (id > 0) {
         if (id == lsp->completion_req_id) {
-            handle_completion_response(lsp, json);
+            handle_completion_response(lsp, json, app);
         } else if (id == lsp->hover_req_id) {
-            handle_hover_response(lsp, json);
+            handle_hover_response(lsp, json, app);
         } else if (id == lsp->definition_req_id) {
             handle_definition_response(lsp, json, app);
         }
@@ -931,17 +1073,37 @@ void lsp_draw_ui(App *app, VkContext *ctx)
     if (app->hover_open && lsp->hover.active && lsp->hover.content[0]) {
         float x = app->hover_x + 12.0f;
         float y = app->hover_y + 12.0f;
-        float max_w = 460.0f;
-        float text_w = font_measure(&app->font, lsp->hover.content);
-        float w = text_w > max_w ? max_w : (text_w + 24.0f);
-        if (w < 180.0f) w = 180.0f;
 
-        float h = app->font.line_height * 2.0f + 16.0f;
+        /* Measure multiline bounds */
+        int line_count = 1;
+        float max_line_w = 0.0f;
+        const char *cur = lsp->hover.content;
+        while (*cur) {
+            const char *nl = strchr(cur, '\n');
+            size_t n = nl ? (size_t)(nl - cur) : strlen(cur);
+            char tmp[256];
+            if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+            memcpy(tmp, cur, n);
+            tmp[n] = 0;
+            float lw = font_measure(&app->font, tmp);
+            if (lw > max_line_w) max_line_w = lw;
+            if (!nl) break;
+            cur = nl + 1;
+            line_count++;
+        }
+
+        float w = max_line_w + 24.0f;
+        if (w < 180.0f) w = 180.0f;
+        if (w > 560.0f) w = 560.0f;
+
+        float h = (float)line_count * app->font.line_height + 16.0f;
 
         float screen_w = (float)ctx->swapchain_extent.width;
         float screen_h = (float)ctx->swapchain_extent.height;
         if (x + w > screen_w - 12.0f) x = screen_w - w - 12.0f;
         if (y + h > screen_h - 32.0f) y = app->hover_y - h - 12.0f;
+        if (x < 12.0f) x = 12.0f;
+        if (y < 32.0f) y = 32.0f;
 
         uint8_t bg[4] = { 26, 28, 34, 250 };
         uint8_t edge[4] = { 65, 70, 80, 255 };
@@ -1018,8 +1180,7 @@ bool lsp_handle_event(App *app, const SDL_Event *ev)
                 const LspCompletionItem *it = &lsp->completions[app->completion_sel];
                 Editor *ed = app_ed(app);
                 if (ed) {
-                    /* Insert item insert_text into editor */
-                    editor_insert(ed, it->insert_text, strlen(it->insert_text));
+                    editor_insert_completion(ed, it->insert_text);
                 }
             }
             app->completion_open = false;

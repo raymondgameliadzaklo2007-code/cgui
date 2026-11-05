@@ -596,6 +596,52 @@ void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y)
     caret_pixel_pos(ed, ed->caret, out_x, out_y);
 }
 
+bool editor_line_col_at_point(const Editor *ed, float px, float py, int *out_line, int *out_col)
+{
+    if (!ed || !out_line || !out_col) return false;
+    float gutter = ed->show_line_numbers ? ed->gutter_w : 0.0f;
+    if (px < ed->view_x + gutter || px >= ed->view_x + ed->view_w ||
+        py < ed->view_y || py >= ed->view_y + ed->view_h)
+        return false;
+
+    size_t idx = index_from_point(ed, px, py);
+    size_t len = logical_len(ed);
+    if (idx >= len) return false;
+
+    char c = char_at(ed, idx);
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'))
+        return false;
+
+    int line = 1, col = 1;
+    for (size_t i = 0; i < idx; ++i) {
+        if (char_at(ed, i) == '\n') { line++; col = 1; }
+        else col++;
+    }
+    *out_line = line;
+    *out_col = col;
+    return true;
+}
+
+void editor_insert_completion(Editor *ed, const char *completion)
+{
+    if (!ed || !completion) return;
+    size_t p = ed->caret;
+    while (p > 0) {
+        char c = char_at(ed, p - 1);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            p--;
+        } else {
+            break;
+        }
+    }
+    if (p < ed->caret) {
+        ed->sel_anchor = p;
+        editor_delete_selection(ed);
+    }
+    editor_insert(ed, completion, strlen(completion));
+}
+
 /* ------------------------------------------------------------------ */
 /* Selection                                                           */
 /* ------------------------------------------------------------------ */

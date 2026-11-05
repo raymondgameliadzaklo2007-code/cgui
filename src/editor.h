@@ -156,6 +156,8 @@ int  editor_current_col(const Editor *ed);
 void editor_set_draw_context(struct VkDraw *d);
 void editor_set_lsp(Editor *ed, struct LspClient *lsp);
 void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y);
+bool editor_line_col_at_point(const Editor *ed, float px, float py, int *out_line, int *out_col);
+void editor_insert_completion(Editor *ed, const char *completion);
 void editor_apply_theme(Editor *ed, const Theme *th);
 void editor_handle_event(Editor *ed, const void *sdl_event);
 void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h);

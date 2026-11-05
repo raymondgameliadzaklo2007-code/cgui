@@ -717,6 +717,11 @@ static void cmd_project_reload(App *app)
     project_config_detect(&app->project_cfg, app->project_root);
 }
 
+static void cmd_toggle_terminal(App *app)
+{
+    terminal_toggle(app);
+}
+
 const Command app_commands[] = {
     { "Project: Run Active Configuration", "Ctrl+B",       cmd_project_run_active },
     { "Project: Build Project",            "Ctrl+Shift+B", cmd_project_build },

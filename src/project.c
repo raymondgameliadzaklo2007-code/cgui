@@ -235,6 +235,31 @@ bool project_config_load_manifest(ProjectConfig *cfg, const char *root_path)
     return true;
 }
 
+bool project_config_save_manifest(const ProjectConfig *cfg, const char *root_path)
+{
+    if (!cfg || !root_path || !root_path[0]) return false;
+
+    char dir[1024];
+    snprintf(dir, sizeof(dir), "%s/.cgui", root_path);
+    (void)mkdir(dir, 0755);
+
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/.cgui/project.json", root_path);
+    FILE *f = fopen(path, "w");
+    if (!f) return false;
+
+    fprintf(f, "{\n  \"name\": \"%s\",\n  \"type\": \"%s\",\n  \"targets\": [\n",
+            cfg->display_name, cfg->type_name);
+    for (int i = 0; i < cfg->target_count; ++i) {
+        const ProjectTarget *t = &cfg->targets[i];
+        fprintf(f, "    {\n      \"name\": \"%s\",\n      \"cmd\": \"%s\"\n    }%s\n",
+                t->name, t->cmd, (i + 1 < cfg->target_count) ? "," : "");
+    }
+    fprintf(f, "  ]\n}\n");
+    fclose(f);
+    return true;
+}
+
 bool project_config_run_target(App *app, int target_index)
 {
     if (!app) return false;
@@ -322,7 +347,7 @@ bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *pr
 
         /* src/main.c */
         snprintf(path, sizeof(path), "%s/src", dest_dir);
-        mkdir(path, 0755);
+        (void)mkdir(path, 0755);
         snprintf(path, sizeof(path), "%s/src/main.c", dest_dir);
         f = fopen(path, "w");
         if (f) {

@@ -897,6 +897,10 @@ bool lua_bridge_execute_command_id(App *app, const char *id)
         if (app) palette_show(app);
         return true;
     }
+    if (strcmp(id, "terminal:toggle") == 0) {
+        if (app) terminal_toggle(app);
+        return true;
+    }
     if (strcmp(id, "file:new") == 0) {
         if (app) tab_add(app, NULL, "");
         return true;

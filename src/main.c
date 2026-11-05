@@ -666,7 +666,24 @@ static void cmd_lsp_rename(App *app)
     app->rename_open = true;
 }
 
+void terminal_toggle(App *app)
+{
+    if (!app) return;
+    app->terminal_open = !app->terminal_open;
+    if (app->terminal_open) {
+        app->terminal.focused = true;
+        if (app->terminal_height <= 0.0f)
+            app->terminal_height = TERM_DEFAULT_HEIGHT;
+    }
+}
+
+static void cmd_toggle_terminal(App *app)
+{
+    terminal_toggle(app);
+}
+
 const Command app_commands[] = {
+    { "View: Toggle Terminal",   "Ctrl+`",       cmd_toggle_terminal },
     { "File: New File",          "Ctrl+N",       cmd_new_file },
     { "File: Open File…",        "Ctrl+O",       cmd_open_file },
     { "File: Open Folder…",      "Ctrl+Shift+O", cmd_open_folder },
@@ -883,11 +900,18 @@ int main(int argc, char **argv)
     for (int i = 0; i < app.tab_count; ++i)
         editor_set_lsp(&app.tabs[i], &app.lsp);
 
+    /* Initialize Integrated Terminal */
+    terminal_init(&app.terminal, app.project_root[0] ? app.project_root : NULL);
+    app.terminal_open = false;
+    app.terminal_height = TERM_DEFAULT_HEIGHT;
+
     SDL_StartTextInput(window);
     printf("Ready – %zu fonts available. Press F1 to pick.\n", app.fonts.count);
 
     while (app.running) {
         lsp_update(&app);
+        if (app.terminal_open || app.terminal.alive)
+            terminal_update(&app.terminal);
 
         uint64_t now_ticks = SDL_GetTicks();
 
@@ -976,6 +1000,13 @@ int main(int argc, char **argv)
 
                 if (alt && !ctrl && ev.key.key == SDLK_T) {
                     cmd_toggle_theme(&app);
+                    continue;
+                }
+
+                /* Toggle Terminal: Ctrl+` or Ctrl+~ or Ctrl+J */
+                if (!app.picker_open && !app.theme_picker_open && (ctrl || gui) &&
+                    (ev.key.key == SDLK_GRAVE || ev.key.key == '`' || ev.key.key == SDLK_J)) {
+                    terminal_toggle(&app);
                     continue;
                 }
 
@@ -1153,6 +1184,9 @@ int main(int argc, char **argv)
                 }
             }
 
+            if (app.terminal_open && terminal_handle_event(&app.terminal, &app, &ev))
+                continue;
+
             if (ev.type == SDL_EVENT_TEXT_INPUT) {
                 Editor *ed = app_ed(&app);
                 if (ed) {
@@ -1251,11 +1285,21 @@ int main(int argc, char **argv)
         const float status_h = 26.0f;
         draw_tab_bar(&app, &app.vk);
         draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
+
+        float term_h = app.terminal_open ? app.terminal_height : 0.0f;
+        float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
+        float editor_h = wh - tab_h - status_h - term_h;
+        if (editor_h < 50.0f) editor_h = 50.0f;
+
         Editor *ed = app_ed(&app);
         if (ed) {
             editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
             editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
-                        ww - PROJECT_SIDEBAR_WIDTH, wh - tab_h - status_h);
+                        editor_w, editor_h);
+        }
+        if (app.terminal_open) {
+            terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
+                          PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
         }
         draw_status_bar(&app, &app.vk);
 
@@ -1280,6 +1324,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < app.tab_count; ++i)
         editor_destroy(&app.tabs[i]);
     project_free(&app);
+    terminal_destroy(&app.terminal);
     if (app.icons_ok) {
         if (app.diag_icons_ok) {
             icon_destroy(&app.icon_diag_error, &app.vk);

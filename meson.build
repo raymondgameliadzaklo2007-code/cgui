@@ -19,6 +19,7 @@ fontconfig_dep = dependency('fontconfig', required: false)
 freetype_dep   = dependency('freetype2', required: true)
 harfbuzz_dep   = dependency('harfbuzz', required: true)
 librsvg_dep    = dependency('librsvg-2.0', required: true)
+util_dep       = cc.find_library('util', required: false)
 
 # Tree-sitter via Meson wraps (subprojects/*.wrap) — not vendored in third_party/
 tree_sitter_dep   = dependency('tree-sitter', required: true,
@@ -93,6 +94,7 @@ sources = files(
   'src/theme.c',
   'src/lua_bridge.c',
   'src/lsp.c',
+  'src/terminal.c',
 )
 
 executable(
@@ -111,6 +113,7 @@ executable(
     tree_sitter_dep,
     tree_sitter_c_dep,
     lua_dep,
+    util_dep,
   ],
   install: false,
 )

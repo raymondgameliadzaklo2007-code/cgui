@@ -22,6 +22,7 @@
 #include "editor.h"
 #include "icon.h"
 #include "lsp.h"
+#include "terminal.h"
 
 #define MAX_TABS 16
 #define PROJECT_PATH_MAX 1024
@@ -182,6 +183,12 @@ typedef struct App {
     int       rename_cursor;
     float     rename_x;
     float     rename_y;
+
+    /* Integrated Terminal */
+    Terminal  terminal;
+    bool      terminal_open;
+    float     terminal_height;
+    bool      terminal_resizing;
 } App;
 
 /* Implemented in main.c */
@@ -192,5 +199,6 @@ void cgui_apply_theme_all(App *app, const char *theme_name);
 void theme_picker_open(App *app);
 void draw_theme_picker(App *app, VkContext *ctx);
 bool theme_picker_handle_event(App *app, const SDL_Event *ev);
+void terminal_toggle(App *app);
 
 #endif /* CGUI_APP_H */

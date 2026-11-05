@@ -95,6 +95,7 @@ sources = files(
   'src/lua_bridge.c',
   'src/lsp.c',
   'src/terminal.c',
+  'src/project.c',
 )
 
 executable(

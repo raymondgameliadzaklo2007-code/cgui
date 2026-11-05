@@ -37,5 +37,8 @@ cgui.keymap.bind("Shift+F12", "lsp:references")
 cgui.keymap.bind("Alt+K", "lsp:hover")
 cgui.keymap.bind("Ctrl+Shift+I", "lsp:format")
 cgui.keymap.bind("Ctrl+`", "terminal:toggle")
+cgui.keymap.bind("Ctrl+B", "project:run")
+cgui.keymap.bind("Ctrl+Shift+B", "project:build")
+cgui.keymap.bind("Alt+Shift+F10", "project:cycle")
 
 cgui.log("cgui Lua configuration loaded successfully.")

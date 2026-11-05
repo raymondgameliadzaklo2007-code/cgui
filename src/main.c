@@ -46,8 +46,13 @@ static void draw_status_bar(App *app, VkContext *ctx)
     Editor *ed = app_ed(app);
     char left[sizeof(((Editor *)0)->path) + 8];
     char center[512];
-    char right[128];
+    char right[256];
     center[0] = 0;
+
+    char proj_badge[128] = {0};
+    if (app->project_cfg.target_count > 0) {
+        project_config_active_summary(&app->project_cfg, proj_badge, sizeof(proj_badge));
+    }
 
     if (ed) {
         const char *path = ed->path[0] ? ed->path : "Untitled";
@@ -61,15 +66,27 @@ static void draw_status_bar(App *app, VkContext *ctx)
                      d->severity == LSP_SEV_ERROR ? "✖ Error" :
                      (d->severity == LSP_SEV_WARNING ? "▲ Warning" : "ℹ Info"),
                      d->message);
+        } else if (app->project_cfg.last_executed[0] &&
+                   SDL_GetTicks() - app->project_cfg.last_executed_ms < 4000) {
+            snprintf(center, sizeof(center), "⚙ Executing: %s", app->project_cfg.last_executed);
         }
 
         const char *lsp_stat = (app->lsp.state == LSP_STATE_RUNNING) ? "clangd" :
                                (app->lsp.state == LSP_STATE_STARTING) ? "lsp starting…" : "no lsp";
-        snprintf(right, sizeof(right), "%s  |  Ln %d, Col %d",
-                 lsp_stat, editor_current_line(ed), editor_current_col(ed));
+        if (proj_badge[0]) {
+            snprintf(right, sizeof(right), "[ %s ]  |  %s  |  Ln %d, Col %d",
+                     proj_badge, lsp_stat, editor_current_line(ed), editor_current_col(ed));
+        } else {
+            snprintf(right, sizeof(right), "%s  |  Ln %d, Col %d",
+                     lsp_stat, editor_current_line(ed), editor_current_col(ed));
+        }
     } else {
         snprintf(left, sizeof(left), "No buffer");
-        right[0] = 0;
+        if (proj_badge[0]) {
+            snprintf(right, sizeof(right), "[ %s ]", proj_badge);
+        } else {
+            right[0] = 0;
+        }
     }
 
     float baseline = y + (bar_h + app->font.ascent + app->font.descent) * 0.5f;
@@ -680,12 +697,31 @@ void terminal_toggle(App *app)
     }
 }
 
-static void cmd_toggle_terminal(App *app)
+static void cmd_project_run_active(App *app)
 {
-    terminal_toggle(app);
+    project_config_run_active(app);
+}
+
+static void cmd_project_build(App *app)
+{
+    project_config_run_build(app);
+}
+
+static void cmd_project_next_target(App *app)
+{
+    project_config_next_target(&app->project_cfg);
+}
+
+static void cmd_project_reload(App *app)
+{
+    project_config_detect(&app->project_cfg, app->project_root);
 }
 
 const Command app_commands[] = {
+    { "Project: Run Active Configuration", "Ctrl+B",       cmd_project_run_active },
+    { "Project: Build Project",            "Ctrl+Shift+B", cmd_project_build },
+    { "Project: Cycle Target (Build/Run)", "Alt+Shift+F10", cmd_project_next_target },
+    { "Project: Reload Configurations",    "Ctrl+Alt+R",   cmd_project_reload },
     { "View: Toggle Terminal",   "Ctrl+`",       cmd_toggle_terminal },
     { "File: New File",          "Ctrl+N",       cmd_new_file },
     { "File: Open File…",        "Ctrl+O",       cmd_open_file },
@@ -861,6 +897,7 @@ int main(int argc, char **argv)
     }
     if (!project_open_initial(&app, argc > 1 ? argv[1] : NULL))
         fprintf(stderr, "Project navigator could not load an initial folder\n");
+    project_config_detect(&app.project_cfg, app.project_root);
 
 
     /* Icons (optional assets) */
@@ -1019,6 +1056,29 @@ int main(int argc, char **argv)
 
                 if (alt && !ctrl && ev.key.key == SDLK_T) {
                     cmd_toggle_theme(&app);
+                    continue;
+                }
+
+                /* JetBrains Project Build & Run: Ctrl+B / Ctrl+Shift+B, F9, Shift+F10 */
+                if (!app.picker_open && !app.theme_picker_open && (ctrl || gui) &&
+                    (ev.key.key == SDLK_B || ev.key.key == 'b' || ev.key.key == 'B')) {
+                    if (shift) {
+                        cmd_project_build(&app);
+                    } else {
+                        cmd_project_run_active(&app);
+                    }
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && ev.key.key == SDLK_F9) {
+                    cmd_project_run_active(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && shift && ev.key.key == SDLK_F10) {
+                    if (alt) {
+                        cmd_project_next_target(&app);
+                    } else {
+                        cmd_project_run_active(&app);
+                    }
                     continue;
                 }
 

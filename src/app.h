@@ -23,6 +23,7 @@
 #include "icon.h"
 #include "lsp.h"
 #include "terminal.h"
+#include "project.h"
 
 #define MAX_TABS 16
 #define PROJECT_PATH_MAX 1024
@@ -73,6 +74,7 @@ typedef struct App {
     int project_scroll;
     char pending_project[PROJECT_PATH_MAX];
     bool project_dialog_open;
+    ProjectConfig project_cfg;
 
     IconRenderer icons;
     Icon         icon_close;

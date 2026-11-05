@@ -901,6 +901,22 @@ bool lua_bridge_execute_command_id(App *app, const char *id)
         if (app) terminal_toggle(app);
         return true;
     }
+    if (strcmp(id, "project:run") == 0 || strcmp(id, "project:run_active") == 0) {
+        if (app) project_config_run_active(app);
+        return true;
+    }
+    if (strcmp(id, "project:build") == 0) {
+        if (app) project_config_run_build(app);
+        return true;
+    }
+    if (strcmp(id, "project:cycle") == 0 || strcmp(id, "project:next_target") == 0) {
+        if (app) project_config_next_target(&app->project_cfg);
+        return true;
+    }
+    if (strcmp(id, "project:reload") == 0) {
+        if (app) project_config_detect(&app->project_cfg, app->project_root);
+        return true;
+    }
     if (strcmp(id, "file:new") == 0) {
         if (app) tab_add(app, NULL, "");
         return true;

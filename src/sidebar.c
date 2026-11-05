@@ -204,6 +204,7 @@ bool project_set_root(App *app, const char *path)
     app->project_root_child_count = 0;
     app->project_scroll = 0;
     project_update_visible(app);
+    project_config_detect(&app->project_cfg, app->project_root);
     return project_load_children(app, -1);
 }
 
@@ -366,7 +367,11 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
 
     float header_baseline = tab_h + (PROJECT_HEADER_HEIGHT +
                                      app->font.ascent + app->font.descent) * 0.5f;
-    font_draw(&app->font, ctx, 14.0f, header_baseline, "PROJECT", heading);
+    char project_heading[64] = "PROJECT";
+    if (app->project_cfg.is_detected && app->project_cfg.type_name[0]) {
+        snprintf(project_heading, sizeof(project_heading), "PROJECT (%s)", app->project_cfg.type_name);
+    }
+    font_draw(&app->font, ctx, 14.0f, header_baseline, project_heading, heading);
     float button_x = sidebar_w - 34.0f;
     float button_y = tab_h + 3.0f;
     bool button_hovered = mouse_x >= button_x && mouse_x < button_x + 26.0f &&

@@ -37,6 +37,23 @@
 
 #include <SDL3/SDL.h>
 
+static IconRenderer *g_term_icons = NULL;
+static Icon         *g_icon_term = NULL;
+static Icon         *g_icon_clear = NULL;
+static Icon         *g_icon_restart = NULL;
+static Icon         *g_icon_close = NULL;
+
+void terminal_set_icons(IconRenderer *r, Icon *icon_term,
+                        Icon *icon_clear, Icon *icon_restart,
+                        Icon *icon_close)
+{
+    g_term_icons = r;
+    g_icon_term = icon_term;
+    g_icon_clear = icon_clear;
+    g_icon_restart = icon_restart;
+    g_icon_close = icon_close;
+}
+
 /* Standard ANSI 16 colors (OneDark / Alacritty inspired) */
 static const uint8_t s_ansi_palette[16][4] = {
     { 30,  34,  42,  255 },  /* 0: Black */
@@ -740,26 +757,63 @@ void terminal_draw(Terminal *term, VkContext *ctx, VkDraw *draw, Font *font,
     uint8_t grip_c[4] = { term->header_border[0] + 30, term->header_border[1] + 30, term->header_border[2] + 30, 255 };
     vk_draw_rounded_rect(draw, x + w * 0.5f - 24.0f, y + 2.0f, 48.0f, 2.0f, 1.0f, 0.0f, grip_c);
 
-    /* Header Title */
+    /* Header Title with Zed terminal icon */
     float hdr_baseline = y + (hdr_h + font->ascent + font->descent) * 0.5f;
-    font_draw(font, ctx, x + 12.0f, hdr_baseline, term->title, term->header_fg);
+    float title_x = x + 12.0f;
+    if (g_term_icons && g_term_icons->ready && g_icon_term && g_icon_term->ready) {
+        float icon_sz = 14.0f;
+        float icon_y = (float)(int)(y + (hdr_h - icon_sz) * 0.5f);
+        icon_draw(g_term_icons, g_icon_term, ctx, title_x, icon_y, icon_sz, icon_sz, term->header_fg);
+        title_x += icon_sz + 6.0f;
+    }
+    font_draw(font, ctx, title_x, hdr_baseline, term->title, term->header_fg);
 
-    /* Header Action Buttons on right: [+] Clear [x] */
-    const char *btn_restart = "[+] New";
-    const char *btn_clear   = "Clear";
-    const char *btn_close   = "✕";
-    float bw_close   = font_measure(font, btn_close);
-    float bw_clear   = font_measure(font, btn_clear);
-    float bw_restart = font_measure(font, btn_restart);
+    /* Header Action Buttons on right: [Restart/New] [Clear/Trash] [Close/✕] */
+    float btn_w = 22.0f;
+    float btn_h = 20.0f;
+    float icon_sz = 14.0f;
+    float by = (float)(int)(y + (hdr_h - btn_h) * 0.5f);
 
-    float bx_close   = x + w - bw_close - 16.0f;
-    float bx_clear   = bx_close - bw_clear - 18.0f;
-    float bx_restart = bx_clear - bw_restart - 18.0f;
+    float bx_close   = x + w - btn_w - 10.0f;
+    float bx_clear   = bx_close - btn_w - 4.0f;
+    float bx_restart = bx_clear - btn_w - 4.0f;
 
-    uint8_t btn_c[4] = { 150, 155, 165, 255 };
-    font_draw(font, ctx, bx_restart, hdr_baseline, btn_restart, btn_c);
-    font_draw(font, ctx, bx_clear, hdr_baseline, btn_clear, btn_c);
-    font_draw(font, ctx, bx_close, hdr_baseline, btn_close, btn_c);
+    float mouse_x = 0, mouse_y = 0;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    bool hover_close   = mouse_x >= bx_close && mouse_x < bx_close + btn_w && mouse_y >= by && mouse_y < by + btn_h;
+    bool hover_clear   = mouse_x >= bx_clear && mouse_x < bx_clear + btn_w && mouse_y >= by && mouse_y < by + btn_h;
+    bool hover_restart = mouse_x >= bx_restart && mouse_x < bx_restart + btn_w && mouse_y >= by && mouse_y < by + btn_h;
+
+    uint8_t hover_bg[4] = { 130, 135, 145, 32 };
+    if (hover_restart) vk_draw_rounded_rect(draw, bx_restart, by, btn_w, btn_h, 3.0f, 1.0f, hover_bg);
+    if (hover_clear)   vk_draw_rounded_rect(draw, bx_clear, by, btn_w, btn_h, 3.0f, 1.0f, hover_bg);
+    if (hover_close)   vk_draw_rounded_rect(draw, bx_close, by, btn_w, btn_h, 3.0f, 1.0f, hover_bg);
+
+    uint8_t icon_c[4] = { 150, 155, 165, 255 };
+    uint8_t icon_h[4] = { 220, 225, 235, 255 };
+
+    if (g_term_icons && g_term_icons->ready) {
+        float iy = (float)(int)(by + (btn_h - icon_sz) * 0.5f);
+        if (g_icon_restart && g_icon_restart->ready) {
+            float ix = (float)(int)(bx_restart + (btn_w - icon_sz) * 0.5f);
+            icon_draw(g_term_icons, g_icon_restart, ctx, ix, iy, icon_sz, icon_sz, hover_restart ? icon_h : icon_c);
+        }
+        if (g_icon_clear && g_icon_clear->ready) {
+            float ix = (float)(int)(bx_clear + (btn_w - icon_sz) * 0.5f);
+            icon_draw(g_term_icons, g_icon_clear, ctx, ix, iy, icon_sz, icon_sz, hover_clear ? icon_h : icon_c);
+        }
+        if (g_icon_close && g_icon_close->ready) {
+            float ix = (float)(int)(bx_close + (btn_w - icon_sz) * 0.5f);
+            icon_draw(g_term_icons, g_icon_close, ctx, ix, iy, icon_sz, icon_sz, hover_close ? icon_h : icon_c);
+        }
+    } else {
+        const char *btn_restart = "[+]";
+        const char *btn_clear   = "Clr";
+        const char *btn_close   = "✕";
+        font_draw(font, ctx, bx_restart + 2.0f, hdr_baseline, btn_restart, hover_restart ? icon_h : icon_c);
+        font_draw(font, ctx, bx_clear + 2.0f, hdr_baseline, btn_clear, hover_clear ? icon_h : icon_c);
+        font_draw(font, ctx, bx_close + 4.0f, hdr_baseline, btn_close, hover_close ? icon_h : icon_c);
+    }
 
     /* 2. Terminal Body Background */
     vk_draw_rounded_rect(draw, x, body_y, w, body_h, 0.0f, 1.0f, term->default_bg);
@@ -911,20 +965,18 @@ bool terminal_handle_event(Terminal *term, App *app, const SDL_Event *ev)
         /* Click inside header */
         if (mx >= term->x && mx <= term->x + term->w &&
             my >= term->y && my <= term->y + TERM_HEADER_HEIGHT) {
-            float bw_close = 20.0f;
-            float bw_clear = 40.0f;
-            float bw_restart = 50.0f;
-            float bx_close = term->x + term->w - bw_close - 16.0f;
-            float bx_clear = bx_close - bw_clear - 18.0f;
-            float bx_restart = bx_clear - bw_restart - 18.0f;
+            float btn_w = 22.0f;
+            float bx_close   = term->x + term->w - btn_w - 10.0f;
+            float bx_clear   = bx_close - btn_w - 4.0f;
+            float bx_restart = bx_clear - btn_w - 4.0f;
 
-            if (mx >= bx_close) {
+            if (mx >= bx_close && mx <= bx_close + btn_w) {
                 app->terminal_open = false;
                 return true;
-            } else if (mx >= bx_clear && mx < bx_close) {
+            } else if (mx >= bx_clear && mx <= bx_clear + btn_w) {
                 terminal_clear(term);
                 return true;
-            } else if (mx >= bx_restart && mx < bx_clear) {
+            } else if (mx >= bx_restart && mx <= bx_restart + btn_w) {
                 terminal_restart(term);
                 return true;
             }

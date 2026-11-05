@@ -20,6 +20,7 @@
 #include "spv_loader.h"
 #include "lucide_close_svg.h"
 #include "diagnostic_icons.h"
+#include "terminal_icons.h"
 #include "tab_bar.h"
 #include "sidebar.h"
 #include "find_bar.h"
@@ -895,6 +896,22 @@ int main(int argc, char **argv)
                                         &app.icon_diag_warning,
                                         &app.icon_diag_info);
         }
+        app.term_icons_ok =
+            icon_load_svg_memory(&app.icon_term, &app.vk,
+                                 terminal_icon_svg, sizeof(terminal_icon_svg)) &&
+            icon_load_svg_memory(&app.icon_term_trash, &app.vk,
+                                 terminal_trash_svg, sizeof(terminal_trash_svg)) &&
+            icon_load_svg_memory(&app.icon_term_rerun, &app.vk,
+                                 terminal_rerun_svg, sizeof(terminal_rerun_svg)) &&
+            icon_load_svg_memory(&app.icon_term_close, &app.vk,
+                                 terminal_close_svg, sizeof(terminal_close_svg));
+        if (app.term_icons_ok) {
+            terminal_set_icons(&app.icons,
+                               &app.icon_term,
+                               &app.icon_term_trash,
+                               &app.icon_term_rerun,
+                               &app.icon_term_close);
+        }
     }
 
     /* Initialize Language Server Protocol (clangd) */
@@ -1333,6 +1350,13 @@ int main(int argc, char **argv)
             icon_destroy(&app.icon_diag_warning, &app.vk);
             icon_destroy(&app.icon_diag_info, &app.vk);
             app.diag_icons_ok = false;
+        }
+        if (app.term_icons_ok) {
+            icon_destroy(&app.icon_term, &app.vk);
+            icon_destroy(&app.icon_term_trash, &app.vk);
+            icon_destroy(&app.icon_term_rerun, &app.vk);
+            icon_destroy(&app.icon_term_close, &app.vk);
+            app.term_icons_ok = false;
         }
         project_icons_destroy(&app);
         icon_destroy(&app.icon_close, &app.vk);

@@ -3,7 +3,8 @@ Copyright 2022-2025 Zed Industries, Inc.
 The following icons are adapted from zed-industries/zed, assets/icons:
 folder.svg, folder_open.svg, chevron_right.svg, chevron_down.svg,
 folder_add.svg, file_icons/c.svg, file_icons/code.svg, file_icons/file.svg,
-and file_icons/book.svg.
+file_icons/book.svg, terminal.svg, trash.svg, eraser.svg, close.svg, rerun.svg,
+and magnifying_glass.svg.
 
 Source: https://github.com/zed-industries/zed/tree/main/assets/icons
 License: Apache-2.0 (see LICENSE-ZED-APACHE).

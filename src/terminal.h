@@ -116,6 +116,14 @@ void terminal_send_input(Terminal *term, const char *data, size_t len);
 void terminal_clear(Terminal *term);
 void terminal_apply_theme(Terminal *term);
 
+struct Icon;
+struct IconRenderer;
+
+/** Icons */
+void terminal_set_icons(struct IconRenderer *r, struct Icon *icon_term,
+                        struct Icon *icon_clear, struct Icon *icon_restart,
+                        struct Icon *icon_close);
+
 /** Drawing and interaction */
 void terminal_draw(Terminal *term, struct VkContext *ctx, struct VkDraw *draw, struct Font *font,
                    float x, float y, float w, float h);

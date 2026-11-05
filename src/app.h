@@ -91,6 +91,11 @@ typedef struct App {
     Icon         icon_diag_warning;
     Icon         icon_diag_info;
     bool         diag_icons_ok;
+    Icon         icon_term;
+    Icon         icon_term_trash;
+    Icon         icon_term_rerun;
+    Icon         icon_term_close;
+    bool         term_icons_ok;
 
     /* Cached text shader SPIR-V for font reloads */
     uint32_t *text_vert;

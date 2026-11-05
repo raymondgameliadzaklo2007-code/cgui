@@ -60,6 +60,19 @@ static const char *QUERY_RULES[] = {
     "(comment) @comment\n",
 
     /* Preprocessor directives & macros */
+    "\"#include\" @preproc\n",
+    "\"#define\" @preproc\n",
+    "\"#ifdef\" @preproc\n",
+    "\"#ifndef\" @preproc\n",
+    "\"#if\" @preproc\n",
+    "\"#else\" @preproc\n",
+    "\"#elif\" @preproc\n",
+    "\"#endif\" @preproc\n",
+    "\"#undef\" @preproc\n",
+    "\"#pragma\" @preproc\n",
+    "\"#error\" @preproc\n",
+    "\"#warning\" @preproc\n",
+    "\"#\" @preproc\n",
     "(preproc_directive) @preproc\n",
     "(preproc_arg) @preproc\n",
     "(preproc_def name: (identifier) @constant)\n",
@@ -130,6 +143,8 @@ static HlKind capture_to_kind(const char *name, uint32_t len)
     if (len >= 6 && !strncmp(name, "number", 6)) return HL_NUMBER;
     if (len >= 7 && !strncmp(name, "comment", 7)) return HL_COMMENT;
     if (len >= 7 && !strncmp(name, "preproc", 7)) return HL_PREPROC;
+    if (len >= 7 && !strncmp(name, "include", 7)) return HL_PREPROC;
+    if (len >= 6 && !strncmp(name, "define", 6)) return HL_PREPROC;
     if (len >= 8 && !strncmp(name, "operator", 8)) return HL_OPERATOR;
     if (len >= 8 && !strncmp(name, "constant", 8)) return HL_CONSTANT;
     if (len >= 8 && !strncmp(name, "property", 8)) return HL_PROPERTY;
@@ -363,6 +378,44 @@ static bool is_constant_builtin(HlReadFn read, void *payload, size_t s, size_t e
     return false;
 }
 
+/* Ensure preprocessor directive commands (#include, #define, #ifdef, etc.) are always highlighted */
+static void scan_preprocs(TSNode node, size_t lo, size_t hi, bool full,
+                          HlReadFn read, void *payload,
+                          HlSpan **out, size_t *count, size_t *cap)
+{
+    const char *type = ts_node_type(node);
+    if (type && !strncmp(type, "preproc_", 8)) {
+        size_t s = ts_node_start_byte(node);
+        size_t e = ts_node_end_byte(node);
+        if (full || (s < hi && e > lo)) {
+            size_t p = s;
+            if (byte_at(read, payload, p) == '#') {
+                p++;
+                while (p < e && (byte_at(read, payload, p) == ' ' || byte_at(read, payload, p) == '\t'))
+                    p++;
+                while (p < e) {
+                    char ch = byte_at(read, payload, p);
+                    if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_')
+                        p++;
+                    else
+                        break;
+                }
+                if (p > s) {
+                    span_push(out, count, cap, (HlSpan){ .start = s, .end = p, .kind = HL_PREPROC });
+                }
+            }
+        }
+    }
+    uint32_t n = ts_node_child_count(node);
+    for (uint32_t i = 0; i < n; ++i) {
+        TSNode ch = ts_node_child(node, i);
+        size_t cs = ts_node_start_byte(ch);
+        size_t ce = ts_node_end_byte(ch);
+        if (!full && (ce <= lo || cs >= hi)) continue;
+        scan_preprocs(ch, lo, hi, full, read, payload, out, count, cap);
+    }
+}
+
 /* Collect captures intersecting [lo, hi) (whole file when full). */
 static void collect(Highlighter *hl, TSTree *tree, bool full, size_t lo, size_t hi,
                     HlReadFn read, void *payload,
@@ -398,6 +451,9 @@ static void collect(Highlighter *hl, TSTree *tree, bool full, size_t lo, size_t 
         }
     }
     ts_query_cursor_delete(cursor);
+
+    /* Guarantee all preprocessor command tokens (#include, #define, #ifdef, etc.) are highlighted */
+    scan_preprocs(ts_tree_root_node(tree), lo, hi, full, read, payload, out, count, cap);
 }
 
 /* Make spans non-overlapping. Input sorted by (start asc, end desc), so an

@@ -26,6 +26,7 @@ typedef struct Theme {
     uint8_t gutter_bg[4];
     uint8_t gutter_fg[4];
     uint8_t bracket_match[4];
+    uint8_t indent_guide[4];
 
     /* Tree-sitter syntax tokens (indexed by HlKind) */
     uint8_t syntax[HL_COUNT][4];

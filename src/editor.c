@@ -2136,10 +2136,16 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                                              w - gutter, ed->line_height, 0.0f, 1.0f, th->line_highlight);
                     }
 
-                    /* Feature: Indent guides (drawn on enclosing scopes: col 0, 4, 8... strictly before text) */
-                    if (g_editor_draw && indent_levels > 0) {
-                        uint8_t guide_col[4] = { 228, 230, 236, 255 };
-                        for (int lvl = 0; lvl < indent_levels; ++lvl) {
+                    /* Feature: Indent guides (drawn on enclosing scopes: col 4, 8... strictly before text) */
+                    if (g_editor_draw && indent_levels > 1) {
+                        const Theme *th = theme_current();
+                        uint8_t guide_col[4];
+                        if (th && (th->indent_guide[0] || th->indent_guide[1] || th->indent_guide[2] || th->indent_guide[3])) {
+                            memcpy(guide_col, th->indent_guide, 4);
+                        } else {
+                            guide_col[0] = 62; guide_col[1] = 68; guide_col[2] = 81; guide_col[3] = 90;
+                        }
+                        for (int lvl = 1; lvl < indent_levels; ++lvl) {
                             float gx = text_left + (float)(lvl * 4) * space_w;
                             if (gx >= x + gutter && gx < x + w - 16.0f) {
                                 vk_draw_rounded_rect(g_editor_draw, gx, line_y - ed->font->ascent,

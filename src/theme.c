@@ -59,6 +59,7 @@ void theme_set_builtin_onedark(Theme *th)
     set_color(th->gutter_bg, 36, 41, 51, 255);      /* match editor background */
     set_color(th->gutter_fg, 92, 99, 112, 255);     /* #5c6370 grey_fg */
     set_color(th->bracket_match, 97, 175, 239, 80);
+    set_color(th->indent_guide,  62, 68,  81,  90); /* subtle dark muted grey-blue with alpha */
 
     /* Syntax */
     set_color(th->syntax[HL_DEFAULT],  171, 178, 191, 255); /* white */
@@ -117,6 +118,7 @@ void theme_set_builtin_light(Theme *th)
     set_color(th->gutter_bg, 252, 252, 252, 255);
     set_color(th->gutter_fg, 140, 140, 145, 255);
     set_color(th->bracket_match, 180, 215, 255, 175);
+    set_color(th->indent_guide,  180, 185, 195,  80); /* soft subtle grey with alpha */
 
     /* Syntax */
     set_color(th->syntax[HL_DEFAULT],  30, 30, 30, 255);

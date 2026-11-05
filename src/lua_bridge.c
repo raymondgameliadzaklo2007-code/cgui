@@ -358,6 +358,12 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->gutter_fg, grey_fg, 4);
     memcpy(th->bracket_match, nord_blue, 4);
     th->bracket_match[3] = 90;
+    if (one_bg2[0] || one_bg2[1] || one_bg2[2]) {
+        memcpy(th->indent_guide, one_bg2, 4);
+    } else {
+        memcpy(th->indent_guide, line, 4);
+    }
+    th->indent_guide[3] = 85; /* subtle contrast */
 
     /* Syntax mapping from base_30 fallback */
     memcpy(th->syntax[HL_DEFAULT],  white, 4);

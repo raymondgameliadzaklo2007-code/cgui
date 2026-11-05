@@ -26,6 +26,7 @@ typedef enum HlKind {
     HL_NUMBER,
     HL_COMMENT,
     HL_PREPROC,
+    HL_INCLUDE,
     HL_OPERATOR,
     HL_CONSTANT,
     HL_PROPERTY,

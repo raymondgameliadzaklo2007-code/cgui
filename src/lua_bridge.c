@@ -218,14 +218,16 @@ static void apply_table_overrides(lua_State *L, int hl_idx, int t_b30, int t_b16
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@operator", th->syntax[HL_OPERATOR]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Operator", th->syntax[HL_OPERATOR]);
 
-    /* Preprocessor */
+    /* Preprocessor & Directives */
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@preproc", th->syntax[HL_PREPROC]);
-    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@include", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.directive", th->syntax[HL_PREPROC]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@define", th->syntax[HL_PREPROC]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "PreProc", th->syntax[HL_PREPROC]);
-    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Include", th->syntax[HL_PREPROC]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Define", th->syntax[HL_PREPROC]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Macro", th->syntax[HL_PREPROC]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@include", th->syntax[HL_INCLUDE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.import", th->syntax[HL_INCLUDE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Include", th->syntax[HL_INCLUDE]);
 
     /* Fields / Properties */
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@property", th->syntax[HL_PROPERTY]);
@@ -373,7 +375,8 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->syntax[HL_STRING],   green, 4);
     memcpy(th->syntax[HL_NUMBER],   orange, 4);
     memcpy(th->syntax[HL_COMMENT],  grey_fg, 4);
-    memcpy(th->syntax[HL_PREPROC],  red, 4);
+    memcpy(th->syntax[HL_PREPROC],  purple, 4); /* Define / keyword.directive */
+    memcpy(th->syntax[HL_INCLUDE],  nord_blue, 4); /* NvChad Include = base0D */
     memcpy(th->syntax[HL_OPERATOR], teal, 4);
     memcpy(th->syntax[HL_CONSTANT], orange, 4);
     memcpy(th->syntax[HL_PROPERTY], red, 4);
@@ -407,7 +410,6 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
             memcpy(th->syntax[HL_DEFAULT], c, 4);
         }
         if (get_table_hex(L, t_b16, "base08", c)) {
-            memcpy(th->syntax[HL_PREPROC], c, 4);
             memcpy(th->syntax[HL_PROPERTY], c, 4);
         }
         if (get_table_hex(L, t_b16, "base09", c)) {
@@ -425,10 +427,12 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
         }
         if (get_table_hex(L, t_b16, "base0D", c)) {
             memcpy(th->syntax[HL_FUNCTION], c, 4);
+            memcpy(th->syntax[HL_INCLUDE], c, 4); /* NvChad Include is base0D */
             memcpy(th->caret, c, 4);
         }
         if (get_table_hex(L, t_b16, "base0E", c)) {
             memcpy(th->syntax[HL_KEYWORD], c, 4);
+            memcpy(th->syntax[HL_PREPROC], c, 4); /* NvChad Define / Helix keyword.directive is base0E */
         }
     }
 

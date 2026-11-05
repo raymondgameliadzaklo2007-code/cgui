@@ -59,25 +59,24 @@ static const char *QUERY_RULES[] = {
     "(number_literal) @number\n",
     "(comment) @comment\n",
 
-    /* Preprocessor directives & macros */
-    "\"#include\" @preproc\n",
-    "\"#define\" @preproc\n",
-    "\"#ifdef\" @preproc\n",
-    "\"#ifndef\" @preproc\n",
-    "\"#if\" @preproc\n",
-    "\"#else\" @preproc\n",
-    "\"#elif\" @preproc\n",
-    "\"#endif\" @preproc\n",
-    "\"#undef\" @preproc\n",
-    "\"#pragma\" @preproc\n",
-    "\"#error\" @preproc\n",
-    "\"#warning\" @preproc\n",
-    "\"#\" @preproc\n",
-    "(preproc_directive) @preproc\n",
+    /* Preprocessor directives & macros (Helix & NvChad style) */
+    "\"#include\" @include\n",
+    "\"#define\" @keyword.directive\n",
+    "\"#ifdef\" @keyword.directive\n",
+    "\"#ifndef\" @keyword.directive\n",
+    "\"#if\" @keyword.directive\n",
+    "\"#else\" @keyword.directive\n",
+    "\"#elif\" @keyword.directive\n",
+    "\"#endif\" @keyword.directive\n",
+    "\"#undef\" @keyword.directive\n",
+    "\"#pragma\" @keyword.directive\n",
+    "\"#error\" @keyword.directive\n",
+    "\"#warning\" @keyword.directive\n",
+    "(preproc_directive) @keyword.directive\n",
     "(preproc_arg) @preproc\n",
     "(preproc_def name: (identifier) @constant)\n",
     "(preproc_function_def name: (identifier) @function)\n",
-    "(preproc_call directive: (preproc_directive) @preproc)\n",
+    "(preproc_call directive: (preproc_directive) @keyword.directive)\n",
 
     /* Functions & Calls */
     "(call_expression function: (identifier) @function)\n",
@@ -136,19 +135,41 @@ static const char *QUERY_RULES[] = {
 
 static HlKind capture_to_kind(const char *name, uint32_t len)
 {
+    if (len >= 7 && !strncmp(name, "include", 7)) return HL_INCLUDE;
+    if (len >= 14 && !strncmp(name, "keyword.import", 14)) return HL_INCLUDE;
+    if (len >= 17 && !strncmp(name, "keyword.directive", 17)) return HL_PREPROC;
+    if (len >= 7 && !strncmp(name, "preproc", 7)) return HL_PREPROC;
+    if (len >= 6 && !strncmp(name, "define", 6)) return HL_PREPROC;
     if (len >= 7 && !strncmp(name, "keyword", 7)) return HL_KEYWORD;
     if (len >= 4 && !strncmp(name, "type", 4)) return HL_TYPE;
     if (len >= 8 && !strncmp(name, "function", 8)) return HL_FUNCTION;
     if (len >= 6 && !strncmp(name, "string", 6)) return HL_STRING;
+    if (len >= 16 && !strncmp(name, "constant.numeric", 16)) return HL_NUMBER;
     if (len >= 6 && !strncmp(name, "number", 6)) return HL_NUMBER;
     if (len >= 7 && !strncmp(name, "comment", 7)) return HL_COMMENT;
-    if (len >= 7 && !strncmp(name, "preproc", 7)) return HL_PREPROC;
-    if (len >= 7 && !strncmp(name, "include", 7)) return HL_PREPROC;
-    if (len >= 6 && !strncmp(name, "define", 6)) return HL_PREPROC;
     if (len >= 8 && !strncmp(name, "operator", 8)) return HL_OPERATOR;
     if (len >= 8 && !strncmp(name, "constant", 8)) return HL_CONSTANT;
     if (len >= 8 && !strncmp(name, "property", 8)) return HL_PROPERTY;
+    if (len >= 21 && !strncmp(name, "variable.other.member", 21)) return HL_PROPERTY;
     return HL_DEFAULT;
+}
+
+static char *load_scm_file(const char *path, size_t *out_len)
+{
+    if (!path) return NULL;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    if (sz <= 0 || sz > 512 * 1024) { fclose(fp); return NULL; }
+    fseek(fp, 0, SEEK_SET);
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(fp); return NULL; }
+    size_t nr = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    buf[nr] = '\0';
+    if (out_len) *out_len = nr;
+    return buf;
 }
 
 bool highlight_init(Highlighter *hl)
@@ -165,45 +186,76 @@ bool highlight_init(Highlighter *hl)
         return false;
     }
 
-    /* Dynamically build combined query from rules supported by runtime grammar */
-    size_t cap = 8192;
-    char *query_buf = malloc(cap);
-    if (!query_buf) {
-        ts_parser_delete(parser);
-        return false;
-    }
-    query_buf[0] = '\0';
-    size_t query_len = 0;
-    int rules_accepted = 0;
+    /* 1. Try loading external Helix / Neovim .scm query file from disk */
+    const char *scm_paths[] = {
+#ifdef CGUI_DEFAULT_QUERIES_PATH
+        CGUI_DEFAULT_QUERIES_PATH "/c/highlights.scm",
+#endif
+        "assets/queries/c/highlights.scm",
+        "queries/c/highlights.scm",
+        NULL
+    };
 
-    for (size_t i = 0; QUERY_RULES[i] != NULL; ++i) {
-        const char *rule = QUERY_RULES[i];
-        uint32_t err_offset = 0;
-        TSQueryError err = TSQueryErrorNone;
-        TSQuery *test_q = ts_query_new(lang, rule, (uint32_t)strlen(rule), &err_offset, &err);
-        if (test_q) {
-            ts_query_delete(test_q);
-            size_t rlen = strlen(rule);
-            if (query_len + rlen + 1 >= cap) {
-                cap *= 2;
-                char *nb = realloc(query_buf, cap);
-                if (!nb) break;
-                query_buf = nb;
+    TSQuery *query = NULL;
+    for (size_t i = 0; scm_paths[i] != NULL; ++i) {
+        size_t slen = 0;
+        char *stext = load_scm_file(scm_paths[i], &slen);
+        if (stext) {
+            uint32_t err_offset = 0;
+            TSQueryError err = TSQueryErrorNone;
+            query = ts_query_new(lang, stext, (uint32_t)slen, &err_offset, &err);
+            if (query) {
+                printf("Tree-sitter C query loaded from %s\n", scm_paths[i]);
+                free(stext);
+                break;
             }
-            memcpy(query_buf + query_len, rule, rlen);
-            query_len += rlen;
-            query_buf[query_len] = '\0';
-            rules_accepted++;
+            free(stext);
         }
     }
 
-    uint32_t err_offset = 0;
-    TSQueryError err = TSQueryErrorNone;
-    TSQuery *query = NULL;
-    if (query_len > 0) {
-        query = ts_query_new(lang, query_buf, (uint32_t)query_len, &err_offset, &err);
+    /* 2. Fall back to validated built-in rule concatenation if .scm was not loaded */
+    if (!query) {
+        size_t cap = 8192;
+        char *query_buf = malloc(cap);
+        if (!query_buf) {
+            ts_parser_delete(parser);
+            return false;
+        }
+        query_buf[0] = '\0';
+        size_t query_len = 0;
+        int rules_accepted = 0;
+
+        for (size_t i = 0; QUERY_RULES[i] != NULL; ++i) {
+            const char *rule = QUERY_RULES[i];
+            uint32_t err_offset = 0;
+            TSQueryError err = TSQueryErrorNone;
+            TSQuery *test_q = ts_query_new(lang, rule, (uint32_t)strlen(rule), &err_offset, &err);
+            if (test_q) {
+                ts_query_delete(test_q);
+                size_t rlen = strlen(rule);
+                if (query_len + rlen + 1 >= cap) {
+                    cap *= 2;
+                    char *nb = realloc(query_buf, cap);
+                    if (!nb) break;
+                    query_buf = nb;
+                }
+                memcpy(query_buf + query_len, rule, rlen);
+                query_len += rlen;
+                query_buf[query_len] = '\0';
+                rules_accepted++;
+            }
+        }
+
+        uint32_t err_offset = 0;
+        TSQueryError err = TSQueryErrorNone;
+        if (query_len > 0) {
+            query = ts_query_new(lang, query_buf, (uint32_t)query_len, &err_offset, &err);
+        }
+        free(query_buf);
+        if (query) {
+            printf("Tree-sitter C highlighter ready (%d rules active)\n", rules_accepted);
+        }
     }
-    free(query_buf);
 
     if (!query) {
         fprintf(stderr, "highlight: query error %d at %u\n", (int)err, err_offset);
@@ -393,6 +445,7 @@ static void scan_preprocs(TSNode node, size_t lo, size_t hi, bool full,
                 p++;
                 while (p < e && (byte_at(read, payload, p) == ' ' || byte_at(read, payload, p) == '\t'))
                     p++;
+                size_t word_start = p;
                 while (p < e) {
                     char ch = byte_at(read, payload, p);
                     if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_')
@@ -401,7 +454,14 @@ static void scan_preprocs(TSNode node, size_t lo, size_t hi, bool full,
                         break;
                 }
                 if (p > s) {
-                    span_push(out, count, cap, (HlSpan){ .start = s, .end = p, .kind = HL_PREPROC });
+                    bool is_inc = false;
+                    if (p - word_start == 7) {
+                        char w[8];
+                        for (size_t k = 0; k < 7; ++k) w[k] = byte_at(read, payload, word_start + k);
+                        w[7] = '\0';
+                        if (!strcmp(w, "include")) is_inc = true;
+                    }
+                    span_push(out, count, cap, (HlSpan){ .start = s, .end = p, .kind = is_inc ? HL_INCLUDE : HL_PREPROC });
                 }
             }
         }

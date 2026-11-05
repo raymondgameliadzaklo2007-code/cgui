@@ -43,7 +43,7 @@ static void draw_status_bar(App *app, VkContext *ctx)
 
     Editor *ed = app_ed(app);
     char left[sizeof(((Editor *)0)->path) + 8];
-    char center[256];
+    char center[512];
     char right[128];
     center[0] = 0;
 

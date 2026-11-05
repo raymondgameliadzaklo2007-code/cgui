@@ -341,7 +341,7 @@ void lsp_doc_did_save(LspClient *lsp, const char *path)
     char uri[LSP_MAX_PATH];
     path_to_uri(path, uri, sizeof(uri));
 
-    char payload[1024];
+    char payload[1536];
     snprintf(payload, sizeof(payload),
              "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"}}}",
@@ -356,7 +356,7 @@ void lsp_doc_did_close(LspClient *lsp, const char *path)
     char uri[LSP_MAX_PATH];
     path_to_uri(path, uri, sizeof(uri));
 
-    char payload[1024];
+    char payload[1536];
     snprintf(payload, sizeof(payload),
              "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"}}}",
@@ -381,7 +381,7 @@ void lsp_request_completion(LspClient *lsp, const char *path, int line, int col)
     lsp->completion_line = line;
     lsp->completion_col = col;
 
-    char req[1024];
+    char req[1536];
     /* LSP positions are 0-based */
     snprintf(req, sizeof(req),
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/completion\",\"params\":{"
@@ -401,7 +401,7 @@ void lsp_request_hover(LspClient *lsp, const char *path, int line, int col)
     int id = lsp->next_id++;
     lsp->hover_req_id = id;
 
-    char req[1024];
+    char req[1536];
     snprintf(req, sizeof(req),
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/hover\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"},"
@@ -420,7 +420,7 @@ void lsp_request_definition(LspClient *lsp, const char *path, int line, int col)
     int id = lsp->next_id++;
     lsp->definition_req_id = id;
 
-    char req[1024];
+    char req[1536];
     snprintf(req, sizeof(req),
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/definition\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"},"
@@ -440,7 +440,7 @@ void lsp_request_format(LspClient *lsp, const char *path)
     lsp->format_req_id = id;
     lsp->format_pending = true;
 
-    char req[1024];
+    char req[1536];
     snprintf(req, sizeof(req),
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/formatting\",\"params\":{"
              "\"textDocument\":{\"uri\":\"%s\"},"
@@ -911,7 +911,7 @@ void lsp_draw_ui(App *app, VkContext *ctx)
             /* Detail text */
             if (it->detail[0]) {
                 uint8_t dim_c[4] = { 150, 155, 165, 200 };
-                char short_detail[64];
+                char short_detail[128];
                 snprintf(short_detail, sizeof(short_detail), "%s", it->detail);
                 float dw = font_measure(&app->font, short_detail);
                 if (x + w - dw - 12.0f > x + 180.0f)

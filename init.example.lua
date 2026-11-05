@@ -26,11 +26,14 @@ cgui.commands.register("custom:toggle_dark_light", function()
 end, "Theme: Toggle Dark / Light", "Alt+T")
 
 -- Bind direct keyboard shortcuts to registered commands or custom functions
-cgui.keymap.bind("F2", "theme:picker")
+cgui.keymap.bind("F2", "lsp:rename")
+cgui.keymap.bind("F5", "theme:picker")
 cgui.keymap.bind("Alt+T", "theme:toggle")
 cgui.keymap.bind("Ctrl+Shift+P", "palette:open")
 cgui.keymap.bind("Ctrl+Space", "lsp:complete")
+cgui.keymap.bind("Ctrl+Shift+Space", "lsp:signature_help")
 cgui.keymap.bind("F12", "lsp:definition")
+cgui.keymap.bind("Shift+F12", "lsp:references")
 cgui.keymap.bind("Alt+K", "lsp:hover")
 cgui.keymap.bind("Ctrl+Shift+I", "lsp:format")
 

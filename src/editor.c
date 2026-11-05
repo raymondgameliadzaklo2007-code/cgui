@@ -665,6 +665,103 @@ size_t editor_current_word_prefix(const Editor *ed, char *out_prefix, size_t out
     return len;
 }
 
+size_t editor_current_word(const Editor *ed, char *out_word, size_t out_cap)
+{
+    if (!ed || !out_word || out_cap == 0) return 0;
+    size_t len = logical_len(ed);
+    if (len == 0) { out_word[0] = '\0'; return 0; }
+    size_t p = ed->caret;
+    if (p > len) p = len;
+
+    /* If cursor is after a word char or at boundary, step back one char if needed */
+    if (p > 0 && (p == len || !((char_at(ed, p) >= 'a' && char_at(ed, p) <= 'z') ||
+                                (char_at(ed, p) >= 'A' && char_at(ed, p) <= 'Z') ||
+                                (char_at(ed, p) >= '0' && char_at(ed, p) <= '9') ||
+                                char_at(ed, p) == '_'))) {
+        char prev = char_at(ed, p - 1);
+        if ((prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+            (prev >= '0' && prev <= '9') || prev == '_') {
+            p--;
+        }
+    }
+
+    if (p >= len || !((char_at(ed, p) >= 'a' && char_at(ed, p) <= 'z') ||
+                      (char_at(ed, p) >= 'A' && char_at(ed, p) <= 'Z') ||
+                      (char_at(ed, p) >= '0' && char_at(ed, p) <= '9') ||
+                      char_at(ed, p) == '_')) {
+        out_word[0] = '\0';
+        return 0;
+    }
+
+    /* Seek left to word start */
+    size_t start = p;
+    while (start > 0) {
+        char c = char_at(ed, start - 1);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            start--;
+        } else {
+            break;
+        }
+    }
+
+    /* Seek right to word end */
+    size_t end = p;
+    while (end < len) {
+        char c = char_at(ed, end);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            end++;
+        } else {
+            break;
+        }
+    }
+
+    size_t wlen = end - start;
+    if (wlen >= out_cap) wlen = out_cap - 1;
+    for (size_t i = 0; i < wlen; ++i) {
+        out_word[i] = char_at(ed, start + i);
+    }
+    out_word[wlen] = '\0';
+    return wlen;
+}
+
+size_t editor_pos_from_line_col(const Editor *ed, int line_1based, int col_1based)
+{
+    if (!ed) return 0;
+    size_t len = logical_len(ed);
+    size_t pos = 0;
+    int cur_line = 1;
+    while (cur_line < line_1based && pos < len) {
+        if (char_at(ed, pos) == '\n') cur_line++;
+        pos++;
+    }
+    int cur_col = 1;
+    while (cur_col < col_1based && pos < len && char_at(ed, pos) != '\n') {
+        cur_col++;
+        pos++;
+    }
+    return pos;
+}
+
+bool editor_apply_range_edit(Editor *ed, int start_line, int start_col, int end_line, int end_col, const char *new_text)
+{
+    if (!ed) return false;
+    size_t start_pos = editor_pos_from_line_col(ed, start_line, start_col);
+    size_t end_pos   = editor_pos_from_line_col(ed, end_line, end_col);
+    if (start_pos > end_pos) {
+        size_t tmp = start_pos; start_pos = end_pos; end_pos = tmp;
+    }
+    ed->caret = end_pos;
+    ed->sel_anchor = start_pos;
+    editor_delete_selection(ed);
+    if (new_text && new_text[0]) {
+        editor_insert(ed, new_text, strlen(new_text));
+    }
+    return true;
+}
+
+
 /* ------------------------------------------------------------------ */
 /* Selection                                                           */
 /* ------------------------------------------------------------------ */

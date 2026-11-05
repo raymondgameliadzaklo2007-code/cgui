@@ -103,6 +103,41 @@ typedef struct LspLocation {
     int  col;  /* 1-based */
 } LspLocation;
 
+#define LSP_MAX_REFERENCES 128
+#define LSP_MAX_RENAME_EDITS 128
+
+typedef struct LspSignatureParam {
+    char label[64];
+    int  start_offset;
+    int  end_offset;
+} LspSignatureParam;
+
+typedef struct LspSignatureHelp {
+    bool active;
+    char label[384];
+    char doc[256];
+    int  active_param;
+    int  param_count;
+    LspSignatureParam params[16];
+} LspSignatureHelp;
+
+typedef struct LspReferenceItem {
+    char path[LSP_MAX_PATH];
+    char filename[128];
+    int  line; /* 1-based */
+    int  col;  /* 1-based */
+    char preview[160];
+} LspReferenceItem;
+
+typedef struct LspTextEdit {
+    char path[LSP_MAX_PATH];
+    int  start_line; /* 1-based */
+    int  start_col;  /* 1-based */
+    int  end_line;   /* 1-based */
+    int  end_col;    /* 1-based */
+    char new_text[96];
+} LspTextEdit;
+
 typedef struct LspClient {
     LspState state;
     pid_t    pid;
@@ -151,6 +186,22 @@ typedef struct LspClient {
     LspLocation definition;
     int         definition_req_id;
 
+    /* Signature Help */
+    LspSignatureHelp sig_help;
+    int              sig_help_req_id;
+
+    /* References */
+    LspReferenceItem references[LSP_MAX_REFERENCES];
+    int              reference_count;
+    int              reference_req_id;
+    char             reference_symbol[64];
+
+    /* Rename */
+    int              rename_req_id;
+    bool             rename_pending;
+    char             rename_old[64];
+    char             rename_new[64];
+
     /* Formatting */
     int  format_req_id;
     bool format_pending;
@@ -181,6 +232,9 @@ void lsp_request_completion(LspClient *lsp, const char *path, int line, int col)
 void lsp_filter_completions(LspClient *lsp, const char *prefix);
 void lsp_request_hover(LspClient *lsp, const char *path, int line, int col);
 void lsp_request_definition(LspClient *lsp, const char *path, int line, int col);
+void lsp_request_signature_help(LspClient *lsp, const char *path, int line, int col);
+void lsp_request_references(LspClient *lsp, const char *path, int line, int col, const char *symbol);
+void lsp_request_rename(LspClient *lsp, const char *path, int line, int col, const char *old_name, const char *new_name);
 void lsp_request_format(LspClient *lsp, const char *path);
 
 /** UI Queries and Drawing */

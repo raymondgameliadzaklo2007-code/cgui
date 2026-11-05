@@ -905,6 +905,48 @@ bool lua_bridge_execute_command_id(App *app, const char *id)
         /* Open file dialog */
         return true;
     }
+    if (strcmp(id, "lsp:signature_help") == 0 || strcmp(id, "lsp:sig_help") == 0) {
+        if (app) {
+            Editor *ed = app_ed(app);
+            if (ed && ed->path[0] && app->lsp.state == LSP_STATE_RUNNING) {
+                float cx = 0, cy = 0;
+                editor_caret_pixel_pos(ed, &cx, &cy);
+                app->sig_help_x = cx;
+                app->sig_help_y = cy;
+                lsp_request_signature_help(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+            }
+        }
+        return true;
+    }
+    if (strcmp(id, "lsp:references") == 0) {
+        if (app) {
+            Editor *ed = app_ed(app);
+            if (ed && ed->path[0] && app->lsp.state == LSP_STATE_RUNNING) {
+                char word[64] = {0};
+                editor_current_word(ed, word, sizeof(word));
+                lsp_request_references(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed), word);
+            }
+        }
+        return true;
+    }
+    if (strcmp(id, "lsp:rename") == 0) {
+        if (app) {
+            Editor *ed = app_ed(app);
+            if (ed && ed->path[0] && app->lsp.state == LSP_STATE_RUNNING) {
+                close_overlays(app);
+                char word[64] = {0};
+                editor_current_word(ed, word, sizeof(word));
+                if (word[0]) {
+                    snprintf(app->rename_old_name, sizeof(app->rename_old_name), "%s", word);
+                    snprintf(app->rename_new_name, sizeof(app->rename_new_name), "%s", word);
+                    app->rename_len = (int)strlen(app->rename_new_name);
+                    app->rename_cursor = app->rename_len;
+                    app->rename_open = true;
+                }
+            }
+        }
+        return true;
+    }
 
     for (int i = 0; i < g_dynamic_command_count; ++i) {
         if (strcmp(g_dynamic_commands[i].id, id) == 0) {

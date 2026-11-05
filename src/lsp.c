@@ -567,6 +567,76 @@ void lsp_request_definition(LspClient *lsp, const char *path, int line, int col)
     lsp_send_payload(lsp, req);
 }
 
+void lsp_request_signature_help(LspClient *lsp, const char *path, int line, int col)
+{
+    if (!lsp || lsp->state != LSP_STATE_RUNNING || !path || !path[0]) return;
+
+    char uri[LSP_MAX_PATH];
+    path_to_uri(path, uri, sizeof(uri));
+
+    int id = lsp->next_id++;
+    lsp->sig_help_req_id = id;
+
+    char req[1536];
+    snprintf(req, sizeof(req),
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/signatureHelp\",\"params\":{"
+             "\"textDocument\":{\"uri\":\"%s\"},"
+             "\"position\":{\"line\":%d,\"character\":%d}}}",
+             id, uri, line > 0 ? line - 1 : 0, col > 0 ? col - 1 : 0);
+    lsp_send_payload(lsp, req);
+}
+
+void lsp_request_references(LspClient *lsp, const char *path, int line, int col, const char *symbol)
+{
+    if (!lsp || lsp->state != LSP_STATE_RUNNING || !path || !path[0]) return;
+
+    char uri[LSP_MAX_PATH];
+    path_to_uri(path, uri, sizeof(uri));
+
+    int id = lsp->next_id++;
+    lsp->reference_req_id = id;
+    if (symbol) {
+        snprintf(lsp->reference_symbol, sizeof(lsp->reference_symbol), "%s", symbol);
+    } else {
+        lsp->reference_symbol[0] = '\0';
+    }
+
+    char req[1536];
+    snprintf(req, sizeof(req),
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/references\",\"params\":{"
+             "\"textDocument\":{\"uri\":\"%s\"},"
+             "\"position\":{\"line\":%d,\"character\":%d},"
+             "\"context\":{\"includeDeclaration\":true}}}",
+             id, uri, line > 0 ? line - 1 : 0, col > 0 ? col - 1 : 0);
+    lsp_send_payload(lsp, req);
+}
+
+void lsp_request_rename(LspClient *lsp, const char *path, int line, int col, const char *old_name, const char *new_name)
+{
+    if (!lsp || lsp->state != LSP_STATE_RUNNING || !path || !path[0] || !new_name || !new_name[0]) return;
+
+    char uri[LSP_MAX_PATH];
+    path_to_uri(path, uri, sizeof(uri));
+
+    int id = lsp->next_id++;
+    lsp->rename_req_id = id;
+    lsp->rename_pending = true;
+    snprintf(lsp->rename_old, sizeof(lsp->rename_old), "%s", old_name ? old_name : "");
+    snprintf(lsp->rename_new, sizeof(lsp->rename_new), "%s", new_name);
+
+    char esc_new[128];
+    escape_json_string(new_name, esc_new, sizeof(esc_new));
+
+    char req[1536];
+    snprintf(req, sizeof(req),
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"textDocument/rename\",\"params\":{"
+             "\"textDocument\":{\"uri\":\"%s\"},"
+             "\"position\":{\"line\":%d,\"character\":%d},"
+             "\"newName\":\"%s\"}}",
+             id, uri, line > 0 ? line - 1 : 0, col > 0 ? col - 1 : 0, esc_new);
+    lsp_send_payload(lsp, req);
+}
+
 void lsp_request_format(LspClient *lsp, const char *path)
 {
     if (!lsp || lsp->state != LSP_STATE_RUNNING || !path || !path[0]) return;
@@ -908,6 +978,438 @@ static void handle_definition_response(LspClient *lsp, const char *msg, App *app
     }
 }
 
+static void handle_signature_help_response(LspClient *lsp, const char *msg, App *app)
+{
+    const char *result = json_find_property(msg, "result");
+    if (!result || strncmp(result, "null", 4) == 0) {
+        lsp->sig_help.active = false;
+        if (app) app->sig_help_open = false;
+        return;
+    }
+
+    const char *sigs = json_find_property(result, "signatures");
+    if (!sigs) sigs = json_object_get(result, "signatures");
+    if (!sigs || *sigs != '[') {
+        lsp->sig_help.active = false;
+        if (app) app->sig_help_open = false;
+        return;
+    }
+
+    const char *p = json_skip_ws(sigs + 1);
+    if (*p != '{') {
+        lsp->sig_help.active = false;
+        if (app) app->sig_help_open = false;
+        return;
+    }
+
+    memset(&lsp->sig_help, 0, sizeof(lsp->sig_help));
+
+    const char *act_par_p = json_find_property(result, "activeParameter");
+    if (act_par_p) {
+        lsp->sig_help.active_param = json_parse_int(act_par_p);
+    }
+
+    const char *lbl_p = json_find_property(p, "label");
+    if (lbl_p) {
+        json_parse_str(lbl_p, lsp->sig_help.label, sizeof(lsp->sig_help.label));
+    }
+
+    const char *doc_p = json_find_property(p, "documentation");
+    if (doc_p) {
+        if (*doc_p == '\"') {
+            json_parse_str(doc_p, lsp->sig_help.doc, sizeof(lsp->sig_help.doc));
+        } else if (*doc_p == '{') {
+            const char *val = json_object_get(doc_p, "value");
+            if (val) json_parse_str(val, lsp->sig_help.doc, sizeof(lsp->sig_help.doc));
+        }
+        clean_hover_markdown(lsp->sig_help.doc);
+    }
+
+    /* Parameters */
+    const char *params = json_find_property(p, "parameters");
+    if (params && *params == '[') {
+        const char *param_it = params + 1;
+        while (*param_it && *param_it != ']' && lsp->sig_help.param_count < 16) {
+            param_it = json_skip_ws(param_it);
+            if (*param_it != '{') break;
+            LspSignatureParam *sp = &lsp->sig_help.params[lsp->sig_help.param_count];
+            sp->start_offset = -1;
+            sp->end_offset = -1;
+
+            const char *plbl = json_find_property(param_it, "label");
+            if (plbl) {
+                if (*plbl == '\"') {
+                    json_parse_str(plbl, sp->label, sizeof(sp->label));
+                    const char *found = strstr(lsp->sig_help.label, sp->label);
+                    if (found) {
+                        sp->start_offset = (int)(found - lsp->sig_help.label);
+                        sp->end_offset = sp->start_offset + (int)strlen(sp->label);
+                    }
+                } else if (*plbl == '[') {
+                    const char *offs = plbl + 1;
+                    sp->start_offset = json_parse_int(offs);
+                    offs = strchr(offs, ',');
+                    if (offs) sp->end_offset = json_parse_int(offs + 1);
+                    if (sp->start_offset >= 0 && sp->end_offset > sp->start_offset &&
+                        (size_t)sp->end_offset <= strlen(lsp->sig_help.label)) {
+                        size_t l = (size_t)(sp->end_offset - sp->start_offset);
+                        if (l >= sizeof(sp->label)) l = sizeof(sp->label) - 1;
+                        memcpy(sp->label, lsp->sig_help.label + sp->start_offset, l);
+                        sp->label[l] = '\0';
+                    }
+                }
+            }
+
+            lsp->sig_help.param_count++;
+
+            int depth = 0;
+            while (*param_it) {
+                if (*param_it == '{') depth++;
+                else if (*param_it == '}') {
+                    depth--;
+                    if (depth == 0) { param_it++; break; }
+                }
+                param_it++;
+            }
+            param_it = json_skip_ws(param_it);
+            if (*param_it == ',') param_it++;
+        }
+    }
+
+    if (lsp->sig_help.label[0]) {
+        lsp->sig_help.active = true;
+        if (app) {
+            app->sig_help_open = true;
+            Editor *ed = app_ed(app);
+            if (ed) {
+                float cx = 0, cy = 0;
+                editor_caret_pixel_pos(ed, &cx, &cy);
+                app->sig_help_x = cx;
+                app->sig_help_y = cy;
+            }
+        }
+    } else {
+        lsp->sig_help.active = false;
+        if (app) app->sig_help_open = false;
+    }
+}
+
+static void handle_references_response(LspClient *lsp, const char *msg, App *app)
+{
+    lsp->reference_count = 0;
+    const char *result = json_find_property(msg, "result");
+    if (!result || strncmp(result, "null", 4) == 0) return;
+
+    if (*result != '[') return;
+    const char *p = result + 1;
+
+    while (*p && *p != ']' && lsp->reference_count < LSP_MAX_REFERENCES) {
+        p = json_skip_ws(p);
+        if (*p != '{') break;
+
+        LspReferenceItem *ref = &lsp->references[lsp->reference_count];
+        memset(ref, 0, sizeof(*ref));
+
+        const char *uri_p = json_find_property(p, "uri");
+        if (uri_p) {
+            char uri[LSP_MAX_PATH];
+            json_parse_str(uri_p, uri, sizeof(uri));
+            uri_to_path(uri, ref->path, sizeof(ref->path));
+            const char *slash = strrchr(ref->path, '/');
+            snprintf(ref->filename, sizeof(ref->filename), "%s", slash ? slash + 1 : ref->path);
+        }
+
+        const char *range = json_find_property(p, "range");
+        if (range) {
+            const char *start = json_find_property(range, "start");
+            if (start) {
+                const char *sl = json_find_property(start, "line");
+                const char *sc = json_find_property(start, "character");
+                ref->line = sl ? json_parse_int(sl) + 1 : 1;
+                ref->col  = sc ? json_parse_int(sc) + 1 : 1;
+            }
+        }
+
+        ref->preview[0] = '\0';
+        if (app && ref->path[0]) {
+            Editor *ed_match = NULL;
+            for (int t = 0; t < app->tab_count; ++t) {
+                if (strcmp(app->tabs[t].path, ref->path) == 0) {
+                    ed_match = &app->tabs[t];
+                    break;
+                }
+            }
+            if (ed_match) {
+                size_t ppos = editor_pos_from_line_col(ed_match, ref->line, 1);
+                size_t len = editor_length(ed_match);
+                size_t o = 0;
+                while (ppos < len && (ed_match->buf ? false : false)) ppos++;
+                while (ppos < len && o + 1 < sizeof(ref->preview)) {
+                    /* Read line chars */
+                    char c = '\0';
+                    if (ed_match->gap_start && ppos < ed_match->gap_start) {
+                        c = ed_match->buf[ppos];
+                    } else if (ed_match->buf) {
+                        c = ed_match->buf[ppos + (ed_match->gap_end - ed_match->gap_start)];
+                    }
+                    if (c == '\n' || c == '\r') break;
+                    ref->preview[o++] = c;
+                    ppos++;
+                }
+                ref->preview[o] = '\0';
+            } else {
+                FILE *f = fopen(ref->path, "r");
+                if (f) {
+                    char linebuf[512];
+                    int cur_l = 1;
+                    while (fgets(linebuf, sizeof(linebuf), f)) {
+                        if (cur_l == ref->line) {
+                            char *s = linebuf;
+                            while (*s == ' ' || *s == '\t') s++;
+                            char *nl = strpbrk(s, "\r\n");
+                            if (nl) *nl = '\0';
+                            snprintf(ref->preview, sizeof(ref->preview), "%s", s);
+                            break;
+                        }
+                        cur_l++;
+                    }
+                    fclose(f);
+                }
+            }
+        }
+
+        if (ref->path[0]) {
+            lsp->reference_count++;
+        }
+
+        int depth = 0;
+        while (*p) {
+            if (*p == '{') depth++;
+            else if (*p == '}') {
+                depth--;
+                if (depth == 0) { p++; break; }
+            }
+            p++;
+        }
+        p = json_skip_ws(p);
+        if (*p == ',') p++;
+    }
+
+    if (app && lsp->reference_count > 0) {
+        close_overlays(app);
+        app->ref_picker_open = true;
+        app->ref_picker_sel = 0;
+        app->ref_picker_scroll = 0;
+    }
+}
+
+static void handle_rename_response(LspClient *lsp, const char *msg, App *app)
+{
+    lsp->rename_pending = false;
+    const char *result = json_find_property(msg, "result");
+    if (!result || strncmp(result, "null", 4) == 0) return;
+
+    LspTextEdit edits[LSP_MAX_RENAME_EDITS];
+    int edit_count = 0;
+
+    const char *changes = json_find_property(result, "changes");
+    if (changes && *changes == '{') {
+        const char *p = changes + 1;
+        while (*p && *p != '}' && edit_count < LSP_MAX_RENAME_EDITS) {
+            p = json_skip_ws(p);
+            if (*p != '\"') break;
+            char uri[LSP_MAX_PATH];
+            if (!json_parse_str(p, uri, sizeof(uri))) break;
+            char path[LSP_MAX_PATH];
+            uri_to_path(uri, path, sizeof(path));
+
+            p = strchr(p + 1, '\"');
+            if (!p) break;
+            p = json_skip_ws(p + 1);
+            if (*p == ':') p++;
+            p = json_skip_ws(p);
+
+            if (*p == '[') {
+                p++;
+                while (*p && *p != ']' && edit_count < LSP_MAX_RENAME_EDITS) {
+                    p = json_skip_ws(p);
+                    if (*p != '{') break;
+
+                    LspTextEdit *te = &edits[edit_count];
+                    memset(te, 0, sizeof(*te));
+                    snprintf(te->path, sizeof(te->path), "%s", path);
+
+                    const char *range = json_find_property(p, "range");
+                    if (range) {
+                        const char *st = json_find_property(range, "start");
+                        if (st) {
+                            const char *sl = json_find_property(st, "line");
+                            const char *sc = json_find_property(st, "character");
+                            te->start_line = sl ? json_parse_int(sl) + 1 : 1;
+                            te->start_col  = sc ? json_parse_int(sc) + 1 : 1;
+                        }
+                        const char *en = json_find_property(range, "end");
+                        if (en) {
+                            const char *el = json_find_property(en, "line");
+                            const char *ec = json_find_property(en, "character");
+                            te->end_line = el ? json_parse_int(el) + 1 : te->start_line;
+                            te->end_col  = ec ? json_parse_int(ec) + 1 : te->start_col;
+                        }
+                    }
+                    const char *nt = json_find_property(p, "newText");
+                    if (nt) {
+                        json_parse_str(nt, te->new_text, sizeof(te->new_text));
+                    }
+
+                    edit_count++;
+
+                    int depth = 0;
+                    while (*p) {
+                        if (*p == '{') depth++;
+                        else if (*p == '}') {
+                            depth--;
+                            if (depth == 0) { p++; break; }
+                        }
+                        p++;
+                    }
+                    p = json_skip_ws(p);
+                    if (*p == ',') p++;
+                }
+            }
+
+            p = json_skip_ws(p);
+            if (*p == ']') p++;
+            p = json_skip_ws(p);
+            if (*p == ',') p++;
+        }
+    }
+
+    if (edit_count == 0 && app) {
+        const char *doc_changes = json_find_property(result, "documentChanges");
+        if (doc_changes && *doc_changes == '[') {
+            const char *p = doc_changes + 1;
+            while (*p && *p != ']' && edit_count < LSP_MAX_RENAME_EDITS) {
+                p = json_skip_ws(p);
+                if (*p != '{') break;
+                char path[LSP_MAX_PATH] = {0};
+                const char *td = json_find_property(p, "textDocument");
+                if (td) {
+                    const char *u = json_find_property(td, "uri");
+                    if (u) {
+                        char uri[LSP_MAX_PATH];
+                        json_parse_str(u, uri, sizeof(uri));
+                        uri_to_path(uri, path, sizeof(path));
+                    }
+                }
+                const char *edits_arr = json_find_property(p, "edits");
+                if (edits_arr && *edits_arr == '[') {
+                    const char *ep = edits_arr + 1;
+                    while (*ep && *ep != ']' && edit_count < LSP_MAX_RENAME_EDITS) {
+                        ep = json_skip_ws(ep);
+                        if (*ep != '{') break;
+                        LspTextEdit *te = &edits[edit_count];
+                        memset(te, 0, sizeof(*te));
+                        snprintf(te->path, sizeof(te->path), "%s", path);
+                        const char *range = json_find_property(ep, "range");
+                        if (range) {
+                            const char *st = json_find_property(range, "start");
+                            if (st) {
+                                const char *sl = json_find_property(st, "line");
+                                const char *sc = json_find_property(st, "character");
+                                te->start_line = sl ? json_parse_int(sl) + 1 : 1;
+                                te->start_col  = sc ? json_parse_int(sc) + 1 : 1;
+                            }
+                            const char *en = json_find_property(range, "end");
+                            if (en) {
+                                const char *el = json_find_property(en, "line");
+                                const char *ec = json_find_property(en, "character");
+                                te->end_line = el ? json_parse_int(el) + 1 : te->start_line;
+                                te->end_col  = ec ? json_parse_int(ec) + 1 : te->start_col;
+                            }
+                        }
+                        const char *nt = json_find_property(ep, "newText");
+                        if (nt) json_parse_str(nt, te->new_text, sizeof(te->new_text));
+                        edit_count++;
+
+                        int depth = 0;
+                        while (*ep) {
+                            if (*ep == '{') depth++;
+                            else if (*ep == '}') {
+                                depth--;
+                                if (depth == 0) { ep++; break; }
+                            }
+                            ep++;
+                        }
+                        ep = json_skip_ws(ep);
+                        if (*ep == ',') ep++;
+                    }
+                }
+
+                int depth = 0;
+                while (*p) {
+                    if (*p == '{') depth++;
+                    else if (*p == '}') {
+                        depth--;
+                        if (depth == 0) { p++; break; }
+                    }
+                    p++;
+                }
+                p = json_skip_ws(p);
+                if (*p == ',') p++;
+            }
+        }
+    }
+
+    if (edit_count == 0 || !app) return;
+
+    /* Sort edits descending: highest line and column first so character indices remain valid */
+    for (int i = 0; i < edit_count - 1; ++i) {
+        for (int j = i + 1; j < edit_count; ++j) {
+            bool swap = false;
+            int c = strcmp(edits[i].path, edits[j].path);
+            if (c < 0) swap = true;
+            else if (c == 0) {
+                if (edits[i].start_line < edits[j].start_line) swap = true;
+                else if (edits[i].start_line == edits[j].start_line && edits[i].start_col < edits[j].start_col) swap = true;
+            }
+            if (swap) {
+                LspTextEdit tmp = edits[i];
+                edits[i] = edits[j];
+                edits[j] = tmp;
+            }
+        }
+    }
+
+    for (int i = 0; i < edit_count; ++i) {
+        LspTextEdit *te = &edits[i];
+        Editor *ed_target = NULL;
+        for (int t = 0; t < app->tab_count; ++t) {
+            if (strcmp(app->tabs[t].path, te->path) == 0) {
+                ed_target = &app->tabs[t];
+                break;
+            }
+        }
+        if (!ed_target) {
+            if (tab_add(app, te->path, NULL)) {
+                ed_target = &app->tabs[app->tab_count - 1];
+            }
+        }
+        if (ed_target) {
+            if (editor_apply_range_edit(ed_target, te->start_line, te->start_col, te->end_line, te->end_col, te->new_text)) {
+                ed_target->dirty = true;
+            }
+        }
+    }
+
+    for (int t = 0; t < app->tab_count; ++t) {
+        Editor *ed = &app->tabs[t];
+        if (ed->path[0]) {
+            editor_flush_lsp_sync(ed);
+        }
+    }
+    update_window_title(app);
+}
+
 static void process_lsp_message(LspClient *lsp, const char *json, App *app)
 {
     const char *id_p = json_find_property(json, "id");
@@ -957,6 +1459,12 @@ static void process_lsp_message(LspClient *lsp, const char *json, App *app)
             handle_hover_response(lsp, json, app);
         } else if (id == lsp->definition_req_id) {
             handle_definition_response(lsp, json, app);
+        } else if (id == lsp->sig_help_req_id) {
+            handle_signature_help_response(lsp, json, app);
+        } else if (id == lsp->reference_req_id) {
+            handle_references_response(lsp, json, app);
+        } else if (id == lsp->rename_req_id) {
+            handle_rename_response(lsp, json, app);
         }
     }
 }
@@ -1275,6 +1783,219 @@ void lsp_draw_ui(App *app, VkContext *ctx)
 
         font_draw(&app->font, ctx, x + 12.0f, y + app->font.ascent + 8.0f, lsp->hover.content, th->fg);
     }
+
+    /* 3. Signature Help Card */
+    if (app->sig_help_open && lsp->sig_help.active && lsp->sig_help.label[0]) {
+        float screen_w = (float)ctx->swapchain_extent.width;
+        float screen_h = (float)ctx->swapchain_extent.height;
+
+        float full_lbl_w = font_measure(&app->font, lsp->sig_help.label);
+        float w = full_lbl_w + 32.0f;
+        if (w < 280.0f) w = 280.0f;
+        if (w > screen_w - 24.0f) w = screen_w - 24.0f;
+
+        bool has_doc = lsp->sig_help.doc[0] != '\0';
+        float line_h = app->font.line_height;
+        float h = line_h * (has_doc ? 2.3f : 1.3f) + 14.0f;
+
+        float x = app->sig_help_x;
+        float y = app->sig_help_y - h - app->font.ascent - 8.0f;
+        if (y < 32.0f) y = app->sig_help_y + 16.0f;
+        if (x + w > screen_w - 12.0f) x = screen_w - w - 12.0f;
+        if (x < 12.0f) x = 12.0f;
+
+        uint8_t bg[4] = { 24, 26, 32, 250 };
+        uint8_t border[4] = { 70, 80, 100, 255 };
+        vk_draw_rounded_rect(&app->draw, x, y, w, h, 6.0f, 1.0f, bg);
+        vk_draw_rounded_rect(&app->draw, x, y, w, 1.0f, 0.0f, 1.0f, border);
+        vk_draw_rounded_rect(&app->draw, x, y + h - 1.0f, w, 1.0f, 0.0f, 1.0f, border);
+        vk_draw_rounded_rect(&app->draw, x, y, 1.0f, h, 0.0f, 1.0f, border);
+        vk_draw_rounded_rect(&app->draw, x + w - 1.0f, y, 1.0f, h, 0.0f, 1.0f, border);
+
+        float text_y = y + app->font.ascent + 8.0f;
+        int ap = lsp->sig_help.active_param;
+
+        if (ap >= 0 && ap < lsp->sig_help.param_count &&
+            lsp->sig_help.params[ap].start_offset >= 0 &&
+            lsp->sig_help.params[ap].end_offset > lsp->sig_help.params[ap].start_offset) {
+            int s_off = lsp->sig_help.params[ap].start_offset;
+            int e_off = lsp->sig_help.params[ap].end_offset;
+            size_t total_len = strlen(lsp->sig_help.label);
+
+            char pre[256] = {0};
+            char mid[128] = {0};
+            char post[256] = {0};
+
+            if (s_off > 0) {
+                size_t l = (size_t)s_off < sizeof(pre) ? (size_t)s_off : sizeof(pre) - 1;
+                memcpy(pre, lsp->sig_help.label, l);
+                pre[l] = '\0';
+            }
+            if (e_off > s_off) {
+                size_t l = (size_t)(e_off - s_off) < sizeof(mid) ? (size_t)(e_off - s_off) : sizeof(mid) - 1;
+                memcpy(mid, lsp->sig_help.label + s_off, l);
+                mid[l] = '\0';
+            }
+            if ((size_t)e_off < total_len) {
+                size_t l = (total_len - (size_t)e_off) < sizeof(post) ? (total_len - (size_t)e_off) : sizeof(post) - 1;
+                memcpy(post, lsp->sig_help.label + e_off, l);
+                post[l] = '\0';
+            }
+
+            float cur_x = x + 14.0f;
+            if (pre[0]) {
+                font_draw(&app->font, ctx, cur_x, text_y, pre, th->fg);
+                cur_x += font_measure(&app->font, pre);
+            }
+            if (mid[0]) {
+                uint8_t hl_c[4] = { 250, 205, 90, 255 };
+                float mw = font_measure(&app->font, mid);
+                uint8_t hl_bg[4] = { 250, 205, 90, 45 };
+                vk_draw_rounded_rect(&app->draw, cur_x - 3.0f, text_y - app->font.ascent - 2.0f, mw + 6.0f, app->font.line_height + 4.0f, 3.0f, 1.0f, hl_bg);
+                font_draw(&app->font, ctx, cur_x, text_y, mid, hl_c);
+                cur_x += mw;
+            }
+            if (post[0]) {
+                font_draw(&app->font, ctx, cur_x, text_y, post, th->fg);
+            }
+        } else {
+            font_draw(&app->font, ctx, x + 14.0f, text_y, lsp->sig_help.label, th->fg);
+        }
+
+        if (has_doc) {
+            uint8_t dim[4] = { 160, 165, 175, 220 };
+            font_draw(&app->font, ctx, x + 14.0f, text_y + line_h + 2.0f, lsp->sig_help.doc, dim);
+        }
+    }
+
+    /* 4. References Picker Modal */
+    if (app->ref_picker_open && lsp->reference_count > 0) {
+        float screen_w = (float)ctx->swapchain_extent.width;
+        float screen_h = (float)ctx->swapchain_extent.height;
+
+        float pw = screen_w * 0.65f;
+        if (pw < 520.0f) pw = 520.0f;
+        if (pw > screen_w - 40.0f) pw = screen_w - 40.0f;
+        float ph = screen_h * 0.70f;
+        if (ph < 360.0f) ph = 360.0f;
+        if (ph > screen_h - 40.0f) ph = screen_h - 40.0f;
+
+        float px = (screen_w - pw) * 0.5f;
+        float py = (screen_h - ph) * 0.5f;
+
+        uint8_t scrim[4] = { 10, 10, 14, 110 };
+        vk_draw_rounded_rect(&app->draw, 0, 0, screen_w, screen_h, 0.0f, 1.0f, scrim);
+
+        const uint8_t *panel_bg = th->overlay_bg;
+        const uint8_t *border   = th->overlay_edge;
+        const uint8_t *row_sel  = th->overlay_sel;
+        const uint8_t *accent   = th->caret;
+
+        vk_draw_rounded_rect(&app->draw, px - 1.0f, py - 1.0f, pw + 2.0f, ph + 2.0f, 10.0f, 1.0f, border);
+        vk_draw_rounded_rect(&app->draw, px, py, pw, ph, 9.0f, 1.0f, panel_bg);
+
+        char title[256];
+        snprintf(title, sizeof(title), "References: '%s'  (%d matches)  [Enter = Jump, Esc = Close]",
+                 lsp->reference_symbol[0] ? lsp->reference_symbol : "symbol", lsp->reference_count);
+        font_draw(&app->font, ctx, px + 20.0f, py + 30.0f, title, th->fg);
+
+        float row_h = app->font.line_height + 8.0f;
+        float list_top = py + 52.0f;
+        int visible = (int)((ph - 80.0f) / row_h);
+        if (visible < 1) visible = 1;
+
+        if (app->ref_picker_sel < app->ref_picker_scroll)
+            app->ref_picker_scroll = app->ref_picker_sel;
+        if (app->ref_picker_sel >= app->ref_picker_scroll + visible)
+            app->ref_picker_scroll = app->ref_picker_sel - visible + 1;
+        if (app->ref_picker_scroll < 0) app->ref_picker_scroll = 0;
+
+        for (int r = 0; r < visible; ++r) {
+            int idx = app->ref_picker_scroll + r;
+            if (idx >= lsp->reference_count) break;
+
+            const LspReferenceItem *ref = &lsp->references[idx];
+            float ry = list_top + (float)r * row_h;
+
+            if (idx == app->ref_picker_sel) {
+                vk_draw_rounded_rect(&app->draw, px + 10.0f, ry, pw - 20.0f, row_h, 5.0f, 1.0f, row_sel);
+                vk_draw_rounded_rect(&app->draw, px + 12.0f, ry + 4.0f, 3.0f, row_h - 8.0f, 1.5f, 1.0f, accent);
+            }
+
+            char loc[160];
+            snprintf(loc, sizeof(loc), "%s:%d", ref->filename, ref->line);
+            float baseline = ry + (row_h + app->font.ascent + app->font.descent) * 0.5f;
+
+            uint8_t loc_c[4] = { 100, 175, 255, 255 };
+            font_draw(&app->font, ctx, px + 24.0f, baseline, loc, loc_c);
+
+            float loc_w = font_measure(&app->font, loc);
+            float snippet_x = px + 24.0f + loc_w + 16.0f;
+            if (snippet_x < px + 180.0f) snippet_x = px + 180.0f;
+
+            float max_snip_w = (px + pw - 24.0f) - snippet_x;
+            if (ref->preview[0] && max_snip_w > 50.0f) {
+                char draw_snip[160];
+                truncate_text_to_width(&app->font, ref->preview, max_snip_w, draw_snip, sizeof(draw_snip));
+                font_draw(&app->font, ctx, snippet_x, baseline, draw_snip, th->fg);
+            }
+        }
+
+        char status[128];
+        snprintf(status, sizeof(status), "%d / %d references", app->ref_picker_sel + 1, lsp->reference_count);
+        font_draw(&app->font, ctx, px + 20.0f, py + ph - 16.0f, status, th->gutter_fg);
+    }
+
+    /* 5. Rename Symbol Inline Dialog */
+    if (app->rename_open) {
+        float screen_w = (float)ctx->swapchain_extent.width;
+        float screen_h = (float)ctx->swapchain_extent.height;
+
+        float pw = 420.0f;
+        float ph = 88.0f;
+        float px = (screen_w - pw) * 0.5f;
+        float py = screen_h * 0.28f;
+
+        uint8_t scrim[4] = { 10, 10, 14, 90 };
+        vk_draw_rounded_rect(&app->draw, 0, 0, screen_w, screen_h, 0.0f, 1.0f, scrim);
+
+        const uint8_t *panel_bg = th->overlay_bg;
+        const uint8_t *accent   = th->caret;
+
+        vk_draw_rounded_rect(&app->draw, px - 1.0f, py - 1.0f, pw + 2.0f, ph + 2.0f, 10.0f, 1.0f, accent);
+        vk_draw_rounded_rect(&app->draw, px, py, pw, ph, 9.0f, 1.0f, panel_bg);
+
+        char title[128];
+        snprintf(title, sizeof(title), "Rename Symbol: '%s'", app->rename_old_name);
+        font_draw(&app->font, ctx, px + 16.0f, py + 24.0f, title, th->fg);
+
+        float ib_x = px + 16.0f;
+        float ib_y = py + 34.0f;
+        float ib_w = pw - 32.0f;
+        float ib_h = 28.0f;
+
+        uint8_t input_bg[4] = { 18, 20, 24, 255 };
+        uint8_t input_edge[4] = { 80, 140, 230, 255 };
+        vk_draw_rounded_rect(&app->draw, ib_x, ib_y, ib_w, ib_h, 4.0f, 1.0f, input_bg);
+        vk_draw_rounded_rect(&app->draw, ib_x, ib_y, ib_w, 1.0f, 0.0f, 1.0f, input_edge);
+        vk_draw_rounded_rect(&app->draw, ib_x, ib_y + ib_h - 1.0f, ib_w, 1.0f, 0.0f, 1.0f, input_edge);
+        vk_draw_rounded_rect(&app->draw, ib_x, ib_y, 1.0f, ib_h, 0.0f, 1.0f, input_edge);
+        vk_draw_rounded_rect(&app->draw, ib_x + ib_w - 1.0f, ib_y, 1.0f, ib_h, 0.0f, 1.0f, input_edge);
+
+        float text_base = ib_y + (ib_h + app->font.ascent + app->font.descent) * 0.5f;
+        font_draw(&app->font, ctx, ib_x + 8.0f, text_base, app->rename_new_name, th->fg);
+
+        /* Caret indicator */
+        char pre_caret[128] = {0};
+        if (app->rename_cursor > 0 && (size_t)app->rename_cursor < sizeof(pre_caret)) {
+            memcpy(pre_caret, app->rename_new_name, (size_t)app->rename_cursor);
+            pre_caret[app->rename_cursor] = '\0';
+        }
+        float caret_x = ib_x + 8.0f + font_measure(&app->font, pre_caret);
+        vk_draw_rounded_rect(&app->draw, caret_x, ib_y + 4.0f, 2.0f, ib_h - 8.0f, 1.0f, 1.0f, accent);
+
+        font_draw(&app->font, ctx, px + 16.0f, py + ph - 10.0f, "Enter = Apply Rename, Esc = Cancel", th->gutter_fg);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1286,7 +2007,202 @@ bool lsp_handle_event(App *app, const SDL_Event *ev)
     if (!app || !ev) return false;
     LspClient *lsp = &app->lsp;
 
-    /* If hover is open, dismiss on any key or mouse press */
+    /* 1. Rename Symbol Prompt Input */
+    if (app->rename_open) {
+        if (ev->type == SDL_EVENT_KEY_DOWN) {
+            SDL_Keycode k = ev->key.key;
+            if (k == SDLK_ESCAPE) {
+                app->rename_open = false;
+                return true;
+            } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                if (app->rename_new_name[0] && strcmp(app->rename_old_name, app->rename_new_name) != 0) {
+                    Editor *ed = app_ed(app);
+                    if (ed && ed->path[0]) {
+                        lsp_request_rename(lsp, ed->path, editor_current_line(ed), editor_current_col(ed),
+                                           app->rename_old_name, app->rename_new_name);
+                    }
+                }
+                app->rename_open = false;
+                return true;
+            } else if (k == SDLK_BACKSPACE) {
+                if (app->rename_cursor > 0) {
+                    memmove(&app->rename_new_name[app->rename_cursor - 1],
+                            &app->rename_new_name[app->rename_cursor],
+                            (size_t)(app->rename_len - app->rename_cursor + 1));
+                    app->rename_cursor--;
+                    app->rename_len--;
+                }
+                return true;
+            } else if (k == SDLK_DELETE) {
+                if (app->rename_cursor < app->rename_len) {
+                    memmove(&app->rename_new_name[app->rename_cursor],
+                            &app->rename_new_name[app->rename_cursor + 1],
+                            (size_t)(app->rename_len - app->rename_cursor));
+                    app->rename_len--;
+                }
+                return true;
+            } else if (k == SDLK_LEFT) {
+                if (app->rename_cursor > 0) app->rename_cursor--;
+                return true;
+            } else if (k == SDLK_RIGHT) {
+                if (app->rename_cursor < app->rename_len) app->rename_cursor++;
+                return true;
+            } else if (k == SDLK_HOME) {
+                app->rename_cursor = 0;
+                return true;
+            } else if (k == SDLK_END) {
+                app->rename_cursor = app->rename_len;
+                return true;
+            }
+            return true;
+        } else if (ev->type == SDL_EVENT_TEXT_INPUT) {
+            const char *t = ev->text.text;
+            size_t tlen = strlen(t);
+            if ((size_t)app->rename_len + tlen < sizeof(app->rename_new_name)) {
+                memmove(&app->rename_new_name[app->rename_cursor + tlen],
+                        &app->rename_new_name[app->rename_cursor],
+                        (size_t)(app->rename_len - app->rename_cursor + 1));
+                memcpy(&app->rename_new_name[app->rename_cursor], t, tlen);
+                app->rename_cursor += (int)tlen;
+                app->rename_len += (int)tlen;
+            }
+            return true;
+        } else if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            float screen_w = (float)app->vk.swapchain_extent.width;
+            float screen_h = (float)app->vk.swapchain_extent.height;
+            float pw = 420.0f;
+            float ph = 88.0f;
+            float px = (screen_w - pw) * 0.5f;
+            float py = screen_h * 0.28f;
+            float mx = (float)ev->button.x;
+            float my = (float)ev->button.y;
+            if (mx < px || mx >= px + pw || my < py || my >= py + ph) {
+                app->rename_open = false;
+            }
+            return true;
+        }
+        return true;
+    }
+
+    /* 2. References Picker Input */
+    if (app->ref_picker_open && lsp->reference_count > 0) {
+        if (ev->type == SDL_EVENT_KEY_DOWN) {
+            SDL_Keycode k = ev->key.key;
+            if (k == SDLK_ESCAPE) {
+                app->ref_picker_open = false;
+                return true;
+            } else if (k == SDLK_UP) {
+                if (app->ref_picker_sel > 0) app->ref_picker_sel--;
+                return true;
+            } else if (k == SDLK_DOWN) {
+                if (app->ref_picker_sel + 1 < lsp->reference_count) app->ref_picker_sel++;
+                return true;
+            } else if (k == SDLK_PAGEUP) {
+                app->ref_picker_sel -= 8;
+                if (app->ref_picker_sel < 0) app->ref_picker_sel = 0;
+                return true;
+            } else if (k == SDLK_PAGEDOWN) {
+                app->ref_picker_sel += 8;
+                if (app->ref_picker_sel >= lsp->reference_count)
+                    app->ref_picker_sel = lsp->reference_count - 1;
+                return true;
+            } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                if (app->ref_picker_sel >= 0 && app->ref_picker_sel < lsp->reference_count) {
+                    const LspReferenceItem *ref = &lsp->references[app->ref_picker_sel];
+                    int target_tab = -1;
+                    for (int t = 0; t < app->tab_count; ++t) {
+                        if (strcmp(app->tabs[t].path, ref->path) == 0) {
+                            target_tab = t;
+                            break;
+                        }
+                    }
+                    if (target_tab >= 0) {
+                        app->tab_active = target_tab;
+                    } else {
+                        tab_add(app, ref->path, NULL);
+                    }
+                    Editor *ed = app_ed(app);
+                    if (ed) {
+                        editor_goto_line(ed, ref->line);
+                        size_t p = editor_pos_from_line_col(ed, ref->line, ref->col);
+                        ed->caret = p;
+                        ed->sel_anchor = p;
+                    }
+                    update_window_title(app);
+                }
+                app->ref_picker_open = false;
+                return true;
+            }
+        } else if (ev->type == SDL_EVENT_MOUSE_WHEEL) {
+            app->ref_picker_sel -= (int)ev->wheel.y * 2;
+            if (app->ref_picker_sel < 0) app->ref_picker_sel = 0;
+            if (app->ref_picker_sel >= lsp->reference_count)
+                app->ref_picker_sel = lsp->reference_count - 1;
+            return true;
+        } else if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT) {
+            float screen_w = (float)app->vk.swapchain_extent.width;
+            float screen_h = (float)app->vk.swapchain_extent.height;
+            float pw = screen_w * 0.65f;
+            if (pw < 520.0f) pw = 520.0f;
+            if (pw > screen_w - 40.0f) pw = screen_w - 40.0f;
+            float ph = screen_h * 0.70f;
+            if (ph < 360.0f) ph = 360.0f;
+            if (ph > screen_h - 40.0f) ph = screen_h - 40.0f;
+            float px = (screen_w - pw) * 0.5f;
+            float py = (screen_h - ph) * 0.5f;
+            float mx = (float)ev->button.x;
+            float my = (float)ev->button.y;
+
+            if (mx < px || mx >= px + pw || my < py || my >= py + ph) {
+                app->ref_picker_open = false;
+                return true;
+            }
+
+            float row_h = app->font.line_height + 8.0f;
+            float list_top = py + 52.0f;
+            if (my >= list_top) {
+                int clicked_idx = app->ref_picker_scroll + (int)((my - list_top) / row_h);
+                if (clicked_idx >= 0 && clicked_idx < lsp->reference_count) {
+                    app->ref_picker_sel = clicked_idx;
+                    const LspReferenceItem *ref = &lsp->references[clicked_idx];
+                    int target_tab = -1;
+                    for (int t = 0; t < app->tab_count; ++t) {
+                        if (strcmp(app->tabs[t].path, ref->path) == 0) {
+                            target_tab = t;
+                            break;
+                        }
+                    }
+                    if (target_tab >= 0) {
+                        app->tab_active = target_tab;
+                    } else {
+                        tab_add(app, ref->path, NULL);
+                    }
+                    Editor *ed = app_ed(app);
+                    if (ed) {
+                        editor_goto_line(ed, ref->line);
+                        size_t p = editor_pos_from_line_col(ed, ref->line, ref->col);
+                        ed->caret = p;
+                        ed->sel_anchor = p;
+                    }
+                    update_window_title(app);
+                    app->ref_picker_open = false;
+                }
+            }
+            return true;
+        }
+        return true;
+    }
+
+    /* 3. Signature Help Dismiss */
+    if (app->sig_help_open) {
+        if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.key == SDLK_ESCAPE) {
+            app->sig_help_open = false;
+            lsp->sig_help.active = false;
+            return true;
+        }
+    }
+
+    /* 4. Hover Dismiss */
     if (app->hover_open) {
         if (ev->type == SDL_EVENT_KEY_DOWN ||
             ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -1295,6 +2211,7 @@ bool lsp_handle_event(App *app, const SDL_Event *ev)
         }
     }
 
+    /* 5. Autocompletion Popup */
     if (!app->completion_open || lsp->completion_count == 0)
         return false;
 

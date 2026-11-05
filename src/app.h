@@ -160,6 +160,25 @@ typedef struct App {
     uint64_t  last_mouse_move_ms;
     int       hover_req_line;
     int       hover_req_col;
+
+    /* LSP: Signature Help */
+    bool      sig_help_open;
+    float     sig_help_x;
+    float     sig_help_y;
+
+    /* LSP: References Picker */
+    bool      ref_picker_open;
+    int       ref_picker_sel;
+    int       ref_picker_scroll;
+
+    /* LSP: Rename Symbol */
+    bool      rename_open;
+    char      rename_old_name[64];
+    char      rename_new_name[64];
+    int       rename_len;
+    int       rename_cursor;
+    float     rename_x;
+    float     rename_y;
 } App;
 
 /* Implemented in main.c */

@@ -290,6 +290,11 @@ void close_overlays(App *app)
     app->picker_open = false;
     app->palette_open = false;
     app->theme_picker_open = false;
+    app->completion_open = false;
+    app->hover_open = false;
+    app->sig_help_open = false;
+    app->ref_picker_open = false;
+    app->rename_open = false;
 }
 
 void cgui_apply_theme_all(App *app, const char *theme_name)
@@ -623,6 +628,41 @@ static void cmd_lsp_format(App *app)
     lsp_request_format(&app->lsp, ed->path);
 }
 
+static void cmd_lsp_sig_help(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+    float cx = 0, cy = 0;
+    editor_caret_pixel_pos(ed, &cx, &cy);
+    app->sig_help_x = cx;
+    app->sig_help_y = cy;
+    lsp_request_signature_help(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+}
+
+static void cmd_lsp_references(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+    char word[64] = {0};
+    editor_current_word(ed, word, sizeof(word));
+    lsp_request_references(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed), word);
+}
+
+static void cmd_lsp_rename(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0] || app->lsp.state != LSP_STATE_RUNNING) return;
+    close_overlays(app);
+    char word[64] = {0};
+    editor_current_word(ed, word, sizeof(word));
+    if (!word[0]) return;
+    snprintf(app->rename_old_name, sizeof(app->rename_old_name), "%s", word);
+    snprintf(app->rename_new_name, sizeof(app->rename_new_name), "%s", word);
+    app->rename_len = (int)strlen(app->rename_new_name);
+    app->rename_cursor = app->rename_len;
+    app->rename_open = true;
+}
+
 const Command app_commands[] = {
     { "File: New File",          "Ctrl+N",       cmd_new_file },
     { "File: Open File…",        "Ctrl+O",       cmd_open_file },
@@ -638,8 +678,11 @@ const Command app_commands[] = {
     { "LSP: Trigger Autocompletion", "Ctrl+Space", cmd_lsp_complete },
     { "LSP: Go to Definition",   "F12",          cmd_lsp_definition },
     { "LSP: Hover Documentation", "Alt+K",       cmd_lsp_hover },
+    { "LSP: Signature Help",     "Ctrl+Shift+Space", cmd_lsp_sig_help },
+    { "LSP: Find References",    "Shift+F12",    cmd_lsp_references },
+    { "LSP: Rename Symbol",      "F2",           cmd_lsp_rename },
     { "LSP: Format Document",    "Ctrl+Shift+I", cmd_lsp_format },
-    { "Preferences: Color Theme…", "F2",         cmd_select_theme },
+    { "Preferences: Color Theme…", "F5",         cmd_select_theme },
     { "Preferences: Toggle Dark / Light Theme", "Alt+T", cmd_toggle_theme },
     { "View: Select Font…",      "F1",           cmd_select_font },
     { "View: Increase Font Size", "Ctrl+=",      cmd_font_bigger },
@@ -919,11 +962,19 @@ int main(int argc, char **argv)
                 }
 
                 /* LSP Shortcuts */
-                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_SPACE) {
+                if (!app.picker_open && !app.theme_picker_open && ctrl && shift && ev.key.key == SDLK_SPACE) {
+                    cmd_lsp_sig_help(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && ctrl && !shift && ev.key.key == SDLK_SPACE) {
                     cmd_lsp_complete(&app);
                     continue;
                 }
-                if (!app.picker_open && !app.theme_picker_open && ev.key.key == SDLK_F12) {
+                if (!app.picker_open && !app.theme_picker_open && shift && ev.key.key == SDLK_F12) {
+                    cmd_lsp_references(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && !shift && ev.key.key == SDLK_F12) {
                     cmd_lsp_definition(&app);
                     continue;
                 }
@@ -935,37 +986,11 @@ int main(int argc, char **argv)
                     cmd_lsp_format(&app);
                     continue;
                 }
-
-                if (ctrl && shift && ev.key.key == SDLK_P) {
-                    palette_show(&app);
+                if (!app.picker_open && !app.theme_picker_open && ev.key.key == SDLK_F2) {
+                    cmd_lsp_rename(&app);
                     continue;
                 }
-                if (!app.picker_open && !app.theme_picker_open && ctrl && !shift &&
-                    (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS ||
-                     ev.key.key == SDLK_KP_PLUS)) {
-                    cmd_font_bigger(&app);
-                    continue;
-                }
-                if (!app.picker_open && !app.theme_picker_open && ctrl &&
-                    (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS)) {
-                    cmd_font_smaller(&app);
-                    continue;
-                }
-                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_0) {
-                    cmd_font_reset(&app);
-                    continue;
-                }
-                if (ctrl && ev.key.key == SDLK_Q) {
-                    cmd_quit(&app);
-                    continue;
-                }
-
-                if (ev.key.key == SDLK_F1) {
-                    app.picker_open = !app.picker_open;
-                    app.picker_sel = app.font_index;
-                    continue;
-                }
-                if (ev.key.key == SDLK_F2) {
+                if (ev.key.key == SDLK_F5) {
                     theme_picker_open(&app);
                     continue;
                 }
@@ -1104,6 +1129,10 @@ int main(int argc, char **argv)
                 if (ed) {
                     editor_handle_event(ed, &ev);
                     on_editor_text_changed(&app, ed);
+                    const char *txt = ev.text.text;
+                    if (txt && (strchr(txt, '(') || strchr(txt, ','))) {
+                        cmd_lsp_sig_help(&app);
+                    }
                 }
                 continue;
             }
@@ -1116,11 +1145,17 @@ int main(int argc, char **argv)
                         SDL_Keycode k = ev.key.key;
                         if (k == SDLK_BACKSPACE || k == SDLK_DELETE) {
                             on_editor_text_changed(&app, ed);
+                            if (app.sig_help_open) {
+                                cmd_lsp_sig_help(&app);
+                            }
                         } else if (k == SDLK_LEFT || k == SDLK_RIGHT ||
                                    k == SDLK_HOME || k == SDLK_END) {
                             if (app.completion_open) {
                                 app.completion_open = false;
                                 app.completion_req_pending = false;
+                            }
+                            if (app.sig_help_open) {
+                                cmd_lsp_sig_help(&app);
                             }
                         }
                     }

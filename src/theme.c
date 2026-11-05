@@ -71,9 +71,10 @@ void theme_set_builtin_onedark(Theme *th)
     set_color(th->syntax[HL_COMMENT],  92,  99,  112, 255); /* #5c6370 grey_fg */
     set_color(th->syntax[HL_PREPROC],  198, 120, 221, 255); /* #c678dd purple (Define / keyword.directive) */
     set_color(th->syntax[HL_INCLUDE],  97,  175, 239, 255); /* #61afef blue (NvChad Include = base0D) */
-    set_color(th->syntax[HL_OPERATOR], 86,  182, 194, 255); /* #56b6c2 teal */
-    set_color(th->syntax[HL_CONSTANT], 209, 154, 102, 255); /* #d19a66 orange */
-    set_color(th->syntax[HL_PROPERTY], 224, 108, 117, 255); /* #e06c75 red */
+    set_color(th->syntax[HL_OPERATOR],    86,  182, 194, 255); /* #56b6c2 teal */
+    set_color(th->syntax[HL_CONSTANT],    209, 154, 102, 255); /* #d19a66 orange */
+    set_color(th->syntax[HL_PROPERTY],    224, 108, 117, 255); /* #e06c75 red */
+    set_color(th->syntax[HL_PUNCTUATION], 190, 80,  70,  255); /* #be5046 rust / base0F (NvChad Delimiter / brackets) */
 
     /* Tab bar */
     set_color(th->tab_strip_bg,    30, 34, 42, 255);   /* #1e222a darker_black */
@@ -131,9 +132,10 @@ void theme_set_builtin_light(Theme *th)
     set_color(th->syntax[HL_COMMENT],  80, 140, 90, 255);
     set_color(th->syntax[HL_PREPROC],  170, 13, 145, 255); /* purple (Define) */
     set_color(th->syntax[HL_INCLUDE],  50, 100, 180, 255); /* blue (Include) */
-    set_color(th->syntax[HL_OPERATOR], 50, 50, 50, 255);
-    set_color(th->syntax[HL_CONSTANT], 28, 0, 207, 255);
-    set_color(th->syntax[HL_PROPERTY], 50, 120, 100, 255);
+    set_color(th->syntax[HL_OPERATOR],    50,  50,  50,  255);
+    set_color(th->syntax[HL_CONSTANT],    28,  0,   207, 255);
+    set_color(th->syntax[HL_PROPERTY],    50,  120, 100, 255);
+    set_color(th->syntax[HL_PUNCTUATION], 120, 80,  70,  255);
 
     /* Chrome */
     set_color(th->tab_strip_bg,    232, 232, 232, 255);

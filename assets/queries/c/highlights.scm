@@ -110,6 +110,22 @@
   "->"
 ] @operator
 
+;; Brackets and Delimiters
+[
+  "{"
+  "}"
+  "("
+  ")"
+  "["
+  "]"
+] @punctuation.bracket
+
+[
+  ";"
+  ","
+  ":"
+] @punctuation.delimiter
+
 ;; Literals & Types
 (string_literal) @string
 (system_lib_string) @string

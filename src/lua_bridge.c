@@ -229,6 +229,13 @@ static void apply_table_overrides(lua_State *L, int hl_idx, int t_b30, int t_b16
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@keyword.import", th->syntax[HL_INCLUDE]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Include", th->syntax[HL_INCLUDE]);
 
+    /* Punctuation & Delimiters (brackets, braces, commas, semicolons) */
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@punctuation.bracket", th->syntax[HL_PUNCTUATION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@punctuation.delimiter", th->syntax[HL_PUNCTUATION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@punctuation", th->syntax[HL_PUNCTUATION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@tag.delimiter", th->syntax[HL_PUNCTUATION]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Delimiter", th->syntax[HL_PUNCTUATION]);
+
     /* Fields / Properties */
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@property", th->syntax[HL_PROPERTY]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@field", th->syntax[HL_PROPERTY]);
@@ -379,7 +386,8 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->syntax[HL_INCLUDE],  nord_blue, 4); /* NvChad Include = base0D */
     memcpy(th->syntax[HL_OPERATOR], teal, 4);
     memcpy(th->syntax[HL_CONSTANT], orange, 4);
-    memcpy(th->syntax[HL_PROPERTY], red, 4);
+    memcpy(th->syntax[HL_PROPERTY],    red, 4);
+    memcpy(th->syntax[HL_PUNCTUATION], white, 4);
 
     /* If base_16 is provided, use standard Neovim / Tree-sitter palette */
     int t_b16 = 0;
@@ -433,6 +441,9 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
         if (get_table_hex(L, t_b16, "base0E", c)) {
             memcpy(th->syntax[HL_KEYWORD], c, 4);
             memcpy(th->syntax[HL_PREPROC], c, 4); /* NvChad Define / Helix keyword.directive is base0E */
+        }
+        if (get_table_hex(L, t_b16, "base0F", c)) {
+            memcpy(th->syntax[HL_PUNCTUATION], c, 4); /* NvChad Delimiter & @punctuation.bracket is base0F */
         }
     }
 

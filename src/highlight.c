@@ -130,11 +130,26 @@ static const char *QUERY_RULES[] = {
     "\"?\" @operator\n",
     "\":\" @operator\n",
     "\".\" @operator\n",
+
+    /* Punctuation & Brackets (NvChad base0F / Delimiter) */
+    "\"{\" @punctuation.bracket\n",
+    "\"}\" @punctuation.bracket\n",
+    "\"(\" @punctuation.bracket\n",
+    "\")\" @punctuation.bracket\n",
+    "\"[\" @punctuation.bracket\n",
+    "\"]\" @punctuation.bracket\n",
+    "\";\" @punctuation.delimiter\n",
+    "\",\" @punctuation.delimiter\n",
     NULL
 };
 
 static HlKind capture_to_kind(const char *name, uint32_t len)
 {
+    if (len >= 19 && !strncmp(name, "punctuation.bracket", 19)) return HL_PUNCTUATION;
+    if (len >= 21 && !strncmp(name, "punctuation.delimiter", 21)) return HL_PUNCTUATION;
+    if (len >= 11 && !strncmp(name, "punctuation", 11)) return HL_PUNCTUATION;
+    if (len >= 7 && !strncmp(name, "bracket", 7)) return HL_PUNCTUATION;
+    if (len >= 9 && !strncmp(name, "delimiter", 9)) return HL_PUNCTUATION;
     if (len >= 7 && !strncmp(name, "include", 7)) return HL_INCLUDE;
     if (len >= 14 && !strncmp(name, "keyword.import", 14)) return HL_INCLUDE;
     if (len >= 17 && !strncmp(name, "keyword.directive", 17)) return HL_PREPROC;

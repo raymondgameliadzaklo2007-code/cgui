@@ -30,6 +30,7 @@ typedef enum HlKind {
     HL_OPERATOR,
     HL_CONSTANT,
     HL_PROPERTY,
+    HL_PUNCTUATION,
     HL_COUNT
 } HlKind;
 

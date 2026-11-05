@@ -7,6 +7,7 @@
 #include "highlight.h"
 #include "theme.h"
 #include "lsp.h"
+#include "icon.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,11 +16,23 @@
 #include <math.h>
 #include <SDL3/SDL.h>
 
-static VkDraw *g_editor_draw = NULL;
+static VkDraw        *g_editor_draw = NULL;
+static IconRenderer  *g_editor_icons = NULL;
+static Icon          *g_icon_diag_error = NULL;
+static Icon          *g_icon_diag_warning = NULL;
+static Icon          *g_icon_diag_info = NULL;
 
 void editor_set_draw_context(VkDraw *d)
 {
     g_editor_draw = d;
+}
+
+void editor_set_diagnostic_icons(IconRenderer *r, Icon *err, Icon *warn, Icon *info)
+{
+    g_editor_icons = r;
+    g_icon_diag_error = err;
+    g_icon_diag_warning = warn;
+    g_icon_diag_info = info;
 }
 
 void editor_set_lsp(Editor *ed, struct LspClient *lsp)
@@ -876,7 +889,7 @@ bool editor_create(Editor *ed, Font *font, const char *initial)
     ed->pad_x = 16.0f;
     ed->pad_y = 12.0f;
     ed->show_line_numbers = true;
-    ed->gutter_w = 48.0f;
+    ed->gutter_w = 52.0f;
     ed->line_height = font ? font->line_height : 18.0f;
 
     editor_apply_theme(ed, theme_current());
@@ -2467,22 +2480,77 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                         }
                     }
 
-                    /* Feature: LSP Diagnostic underline */
-                    if (ed->lsp && g_editor_draw) {
-                        const LspDiagnostic *diag = NULL;
-                        if (lsp_diagnostics_for_line(ed->lsp, line_no, &diag) > 0 && diag) {
-                            uint8_t dcol[4];
-                            if (diag->severity == LSP_SEV_ERROR) {
-                                dcol[0] = 235; dcol[1] = 87; dcol[2] = 87; dcol[3] = 240;
-                            } else if (diag->severity == LSP_SEV_WARNING) {
-                                dcol[0] = 242; dcol[1] = 201; dcol[2] = 76; dcol[3] = 240;
-                            } else {
-                                dcol[0] = 80; dcol[1] = 160; dcol[2] = 240; dcol[3] = 240;
-                            }
-                            float sq_x = text_left;
-                            float sq_w = fmaxf(24.0f, (float)r_len * space_w);
-                            if (sq_x + sq_w >= x + gutter && sq_x < x + w) {
-                                vk_draw_rounded_rect(g_editor_draw, sq_x, line_y + 2.0f, sq_w, 2.0f, 1.0f, 1.0f, dcol);
+                    /* Feature: LSP Diagnostic wavy squiggles under exact token range */
+                    if (ed->lsp && g_editor_draw && ed->lsp->diagnostic_count > 0) {
+                        for (int d = 0; d < ed->lsp->diagnostic_count; ++d) {
+                            const LspDiagnostic *diag = &ed->lsp->diagnostics[d];
+                            if (diag->start_line <= line_no && line_no <= diag->end_line) {
+                                int diag_start_col = (line_no == diag->start_line) ? diag->start_col : 1;
+                                int diag_end_col   = (line_no == diag->end_line)   ? diag->end_col   : 99999;
+                                if (diag_end_col <= diag_start_col) {
+                                    diag_end_col = diag_start_col + 1;
+                                }
+
+                                size_t row_off = r_start - line_start_idx;
+                                int col_from = diag_start_col - (int)(row_off + 1);
+                                int col_to   = diag_end_col   - (int)(row_off + 1);
+
+                                float token_x1 = 0.0f;
+                                float token_x2 = 0.0f;
+                                bool token_valid = false;
+
+                                if (r_len == 0) {
+                                    if (row_off == 0) {
+                                        token_x1 = text_left;
+                                        token_x2 = text_left + fmaxf(18.0f, space_w * 2.0f);
+                                        token_valid = true;
+                                    }
+                                } else if (col_to > 0 && col_from < (int)r_len) {
+                                    if (col_from < 0) col_from = 0;
+                                    if (col_to > (int)r_len) col_to = (int)r_len;
+                                    if (col_to <= col_from) {
+                                        col_to = (col_from + 1 <= (int)r_len) ? col_from + 1 : (int)r_len;
+                                    }
+
+                                    token_x1 = text_left;
+                                    for (int t = 0; t < col_from; ++t)
+                                        token_x1 += char_width(ed, linebuf[row_off + t]);
+
+                                    token_x2 = token_x1;
+                                    for (int t = col_from; t < col_to; ++t)
+                                        token_x2 += char_width(ed, linebuf[row_off + t]);
+
+                                    if (token_x2 - token_x1 < space_w * 0.75f)
+                                        token_x2 = token_x1 + space_w * 0.75f;
+                                    token_valid = true;
+                                }
+
+                                if (token_valid) {
+                                    uint8_t dcol[4];
+                                    if (diag->severity == LSP_SEV_ERROR) {
+                                        dcol[0] = 235; dcol[1] = 87;  dcol[2] = 87;  dcol[3] = 245;
+                                    } else if (diag->severity == LSP_SEV_WARNING) {
+                                        dcol[0] = 242; dcol[1] = 201; dcol[2] = 76;  dcol[3] = 245;
+                                    } else {
+                                        dcol[0] = 59;  dcol[1] = 130; dcol[2] = 246; dcol[3] = 245;
+                                    }
+
+                                    float base_y = line_y + 3.0f;
+                                    const float wave_period = 4.0f;
+                                    const float wave_step = 1.8f;
+
+                                    for (float sx = token_x1; sx < token_x2; sx += wave_step) {
+                                        if (sx + 2.2f >= x + gutter && sx < x + w) {
+                                            float phase = fmodf(sx - token_x1, wave_period) / wave_period;
+                                            float wave_t = (phase < 0.5f) ? (phase * 2.0f) : ((1.0f - phase) * 2.0f);
+                                            float wy = base_y + (wave_t * 2.0f - 1.0f) * 1.3f;
+                                            float seg_w = (sx + 2.2f > token_x2) ? (token_x2 - sx) : 2.2f;
+                                            if (seg_w > 0.4f) {
+                                                vk_draw_rounded_rect(g_editor_draw, sx, wy, seg_w, 1.4f, 0.7f, 1.0f, dcol);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2536,19 +2604,55 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                     }
                     font_draw(ed->font, ctx, x + gutter - nw - 8.0f, vis_lines[v].y, num, num_c);
 
-                    /* Feature: LSP Diagnostic gutter dot */
-                    if (ed->lsp && g_editor_draw) {
-                        const LspDiagnostic *diag = NULL;
-                        if (lsp_diagnostics_for_line(ed->lsp, vis_lines[v].line_no, &diag) > 0 && diag) {
-                            uint8_t dcol[4];
-                            if (diag->severity == LSP_SEV_ERROR) {
-                                dcol[0] = 235; dcol[1] = 87; dcol[2] = 87; dcol[3] = 255;
-                            } else if (diag->severity == LSP_SEV_WARNING) {
-                                dcol[0] = 242; dcol[1] = 201; dcol[2] = 76; dcol[3] = 255;
-                            } else {
-                                dcol[0] = 80; dcol[1] = 160; dcol[2] = 240; dcol[3] = 255;
+                    /* Feature: LSP Diagnostic gutter badge (Xcode-style) */
+                    if (ed->lsp && ed->lsp->diagnostic_count > 0) {
+                        const LspDiagnostic *best_diag = NULL;
+                        for (int d = 0; d < ed->lsp->diagnostic_count; ++d) {
+                            const LspDiagnostic *cd = &ed->lsp->diagnostics[d];
+                            if (cd->start_line <= vis_lines[v].line_no && vis_lines[v].line_no <= cd->end_line) {
+                                if (!best_diag || cd->severity < best_diag->severity) {
+                                    best_diag = cd;
+                                }
                             }
-                            vk_draw_rounded_rect(g_editor_draw, x + 4.0f, vis_lines[v].y - 8.0f, 6.0f, 6.0f, 3.0f, 1.0f, dcol);
+                        }
+                        if (best_diag) {
+                            float badge_sz = 13.0f;
+                            float badge_x = x + 4.0f;
+                            float badge_y = vis_lines[v].y - ed->font->ascent * 0.5f - badge_sz * 0.5f;
+
+                            Icon *icon = NULL;
+                            if (best_diag->severity == LSP_SEV_ERROR) {
+                                icon = g_icon_diag_error;
+                            } else if (best_diag->severity == LSP_SEV_WARNING) {
+                                icon = g_icon_diag_warning;
+                            } else {
+                                icon = g_icon_diag_info;
+                            }
+
+                            if (g_editor_icons && g_editor_icons->ready && icon && icon->ready) {
+                                icon_draw(g_editor_icons, icon, ctx, badge_x, badge_y, badge_sz, badge_sz, NULL);
+                            } else if (g_editor_draw) {
+                                /* Crisp vector fallback badge */
+                                uint8_t bcol[4];
+                                if (best_diag->severity == LSP_SEV_ERROR) {
+                                    bcol[0] = 235; bcol[1] = 87;  bcol[2] = 87;  bcol[3] = 255;
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x, badge_y, badge_sz, badge_sz, badge_sz * 0.5f, 1.0f, bcol);
+                                    uint8_t wcol[4] = { 255, 255, 255, 255 };
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x + 3.0f, badge_y + 5.5f, 7.0f, 2.0f, 1.0f, 1.0f, wcol);
+                                } else if (best_diag->severity == LSP_SEV_WARNING) {
+                                    bcol[0] = 242; bcol[1] = 201; bcol[2] = 76;  bcol[3] = 255;
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x, badge_y, badge_sz, badge_sz, 2.5f, 1.0f, bcol);
+                                    uint8_t dark_c[4] = { 30, 30, 30, 255 };
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x + 5.5f, badge_y + 2.5f, 2.0f, 5.0f, 1.0f, 1.0f, dark_c);
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x + 5.5f, badge_y + 9.0f, 2.0f, 2.0f, 1.0f, 1.0f, dark_c);
+                                } else {
+                                    bcol[0] = 59;  bcol[1] = 130; bcol[2] = 246; bcol[3] = 255;
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x, badge_y, badge_sz, badge_sz, badge_sz * 0.5f, 1.0f, bcol);
+                                    uint8_t wcol[4] = { 255, 255, 255, 255 };
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x + 5.5f, badge_y + 2.5f, 2.0f, 2.0f, 1.0f, 1.0f, wcol);
+                                    vk_draw_rounded_rect(g_editor_draw, badge_x + 5.5f, badge_y + 5.5f, 2.0f, 5.0f, 1.0f, 1.0f, wcol);
+                                }
+                            }
                         }
                     }
                 } else {

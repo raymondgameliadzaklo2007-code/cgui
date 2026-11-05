@@ -19,6 +19,7 @@
 #include "app.h"
 #include "spv_loader.h"
 #include "lucide_close_svg.h"
+#include "diagnostic_icons.h"
 #include "tab_bar.h"
 #include "sidebar.h"
 #include "find_bar.h"
@@ -56,7 +57,8 @@ static void draw_status_bar(App *app, VkContext *ctx)
         if (app->lsp.diagnostic_count > 0 &&
             lsp_diagnostics_for_line(&app->lsp, editor_current_line(ed), &d) > 0 && d) {
             snprintf(center, sizeof(center), "%s: %s",
-                     d->severity == LSP_SEV_ERROR ? "✖ Error" : "▲ Warning",
+                     d->severity == LSP_SEV_ERROR ? "✖ Error" :
+                     (d->severity == LSP_SEV_WARNING ? "▲ Warning" : "ℹ Info"),
                      d->message);
         }
 
@@ -859,8 +861,22 @@ int main(int argc, char **argv)
             free(vw); free(fw);
         }
     }
-    if (app.icons_ok)
+    if (app.icons_ok) {
         project_icons_load(&app);
+        app.diag_icons_ok =
+            icon_load_svg_memory(&app.icon_diag_error, &app.vk,
+                                 diagnostic_error_svg, sizeof(diagnostic_error_svg)) &&
+            icon_load_svg_memory(&app.icon_diag_warning, &app.vk,
+                                 diagnostic_warning_svg, sizeof(diagnostic_warning_svg)) &&
+            icon_load_svg_memory(&app.icon_diag_info, &app.vk,
+                                 diagnostic_info_svg, sizeof(diagnostic_info_svg));
+        if (app.diag_icons_ok) {
+            editor_set_diagnostic_icons(&app.icons,
+                                        &app.icon_diag_error,
+                                        &app.icon_diag_warning,
+                                        &app.icon_diag_info);
+        }
+    }
 
     /* Initialize Language Server Protocol (clangd) */
     lsp_init(&app.lsp, "clangd", app.project_root[0] ? app.project_root : NULL);
@@ -1253,6 +1269,12 @@ int main(int argc, char **argv)
         editor_destroy(&app.tabs[i]);
     project_free(&app);
     if (app.icons_ok) {
+        if (app.diag_icons_ok) {
+            icon_destroy(&app.icon_diag_error, &app.vk);
+            icon_destroy(&app.icon_diag_warning, &app.vk);
+            icon_destroy(&app.icon_diag_info, &app.vk);
+            app.diag_icons_ok = false;
+        }
         project_icons_destroy(&app);
         icon_destroy(&app.icon_close, &app.vk);
         icon_renderer_destroy(&app.icons);

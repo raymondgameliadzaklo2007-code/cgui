@@ -17,6 +17,8 @@
 
 struct VkDraw;
 struct LspClient;
+struct Icon;
+struct IconRenderer;
 
 typedef enum UndoKind {
     UNDO_INSERT = 1,
@@ -155,6 +157,7 @@ int  editor_current_line(const Editor *ed);
 int  editor_current_col(const Editor *ed);
 
 void editor_set_draw_context(struct VkDraw *d);
+void editor_set_diagnostic_icons(struct IconRenderer *r, struct Icon *err, struct Icon *warn, struct Icon *info);
 void editor_set_lsp(Editor *ed, struct LspClient *lsp);
 void editor_flush_lsp_sync(Editor *ed);
 void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y);

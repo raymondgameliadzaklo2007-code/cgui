@@ -86,7 +86,10 @@ typedef struct App {
     Icon         project_chevron_down_icon;
     Icon         project_plus_icon;
     bool         project_icons_ok;
-
+    Icon         icon_diag_error;
+    Icon         icon_diag_warning;
+    Icon         icon_diag_info;
+    bool         diag_icons_ok;
 
     /* Cached text shader SPIR-V for font reloads */
     uint32_t *text_vert;

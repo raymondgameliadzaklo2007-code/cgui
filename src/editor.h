@@ -16,6 +16,7 @@
 #include "theme.h"
 
 struct VkDraw;
+struct LspClient;
 
 typedef enum UndoKind {
     UNDO_INSERT = 1,
@@ -95,6 +96,9 @@ typedef struct Editor {
     char  find_query[256];
     bool  find_case;
     bool  find_active;
+
+    struct LspClient *lsp;
+    bool              lsp_dirty;
 } Editor;
 
 bool editor_create(Editor *ed, Font *font, const char *initial);
@@ -150,6 +154,8 @@ int  editor_current_line(const Editor *ed);
 int  editor_current_col(const Editor *ed);
 
 void editor_set_draw_context(struct VkDraw *d);
+void editor_set_lsp(Editor *ed, struct LspClient *lsp);
+void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y);
 void editor_apply_theme(Editor *ed, const Theme *th);
 void editor_handle_event(Editor *ed, const void *sdl_event);
 void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h);

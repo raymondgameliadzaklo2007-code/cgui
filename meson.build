@@ -92,6 +92,7 @@ sources = files(
   'src/icon.c',
   'src/theme.c',
   'src/lua_bridge.c',
+  'src/lsp.c',
 )
 
 executable(

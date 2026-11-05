@@ -6,6 +6,7 @@
 #include "vk_draw.h"
 #include "highlight.h"
 #include "theme.h"
+#include "lsp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,11 @@ static VkDraw *g_editor_draw = NULL;
 void editor_set_draw_context(VkDraw *d)
 {
     g_editor_draw = d;
+}
+
+void editor_set_lsp(Editor *ed, struct LspClient *lsp)
+{
+    if (ed) ed->lsp = lsp;
 }
 
 /* ------------------------------------------------------------------ */
@@ -218,6 +224,7 @@ static bool buf_insert(Editor *ed, size_t pos, const char *text, size_t len)
     ed->gap_start += len;
     ed->dirty = true;
     ed->hl_dirty = true;
+    ed->lsp_dirty = true;
     return true;
 }
 
@@ -240,6 +247,7 @@ static void buf_delete(Editor *ed, size_t pos, size_t n)
     ed->gap_end += n;
     ed->dirty = true;
     ed->hl_dirty = true;
+    ed->lsp_dirty = true;
 }
 
 static char *copy_range(const Editor *ed, size_t a, size_t n)
@@ -580,6 +588,12 @@ static void caret_pixel_pos(const Editor *ed, size_t pos, float *out_x, float *o
 
     *out_x = x;
     *out_y = y;
+}
+
+void editor_caret_pixel_pos(const Editor *ed, float *out_x, float *out_y)
+{
+    if (!ed || !out_x || !out_y) return;
+    caret_pixel_pos(ed, ed->caret, out_x, out_y);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2033,6 +2047,17 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
         ed->hl_dirty = false;
     }
 
+    if (ed->lsp_dirty && ed->lsp && ed->path[0]) {
+        size_t len = logical_len(ed);
+        char *text = malloc(len + 1);
+        if (text) {
+            editor_get_text(ed, text, len + 1);
+            lsp_doc_did_change(ed->lsp, ed->path, text, len);
+            free(text);
+        }
+        ed->lsp_dirty = false;
+    }
+
     if (g_editor_draw) {
         vk_draw_rounded_rect(g_editor_draw, x, y, w, h, 0.0f, 1.0f, ed->bg);
     }
@@ -2266,6 +2291,26 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                             col0 = col1;
                         }
                     }
+
+                    /* Feature: LSP Diagnostic underline */
+                    if (ed->lsp && g_editor_draw) {
+                        const LspDiagnostic *diag = NULL;
+                        if (lsp_diagnostics_for_line(ed->lsp, line_no, &diag) > 0 && diag) {
+                            uint8_t dcol[4];
+                            if (diag->severity == LSP_SEV_ERROR) {
+                                dcol[0] = 235; dcol[1] = 87; dcol[2] = 87; dcol[3] = 240;
+                            } else if (diag->severity == LSP_SEV_WARNING) {
+                                dcol[0] = 242; dcol[1] = 201; dcol[2] = 76; dcol[3] = 240;
+                            } else {
+                                dcol[0] = 80; dcol[1] = 160; dcol[2] = 240; dcol[3] = 240;
+                            }
+                            float sq_x = text_left;
+                            float sq_w = fmaxf(24.0f, (float)r_len * space_w);
+                            if (sq_x + sq_w >= x + gutter && sq_x < x + w) {
+                                vk_draw_rounded_rect(g_editor_draw, sq_x, line_y + 2.0f, sq_w, 2.0f, 1.0f, 1.0f, dcol);
+                            }
+                        }
+                    }
                 }
 
                 line_y += ed->line_height;
@@ -2315,6 +2360,22 @@ void editor_draw(Editor *ed, VkContext *ctx, float x, float y, float w, float h)
                         memcpy(num_c, th->gutter_fg, 4);
                     }
                     font_draw(ed->font, ctx, x + gutter - nw - 8.0f, vis_lines[v].y, num, num_c);
+
+                    /* Feature: LSP Diagnostic gutter dot */
+                    if (ed->lsp && g_editor_draw) {
+                        const LspDiagnostic *diag = NULL;
+                        if (lsp_diagnostics_for_line(ed->lsp, vis_lines[v].line_no, &diag) > 0 && diag) {
+                            uint8_t dcol[4];
+                            if (diag->severity == LSP_SEV_ERROR) {
+                                dcol[0] = 235; dcol[1] = 87; dcol[2] = 87; dcol[3] = 255;
+                            } else if (diag->severity == LSP_SEV_WARNING) {
+                                dcol[0] = 242; dcol[1] = 201; dcol[2] = 76; dcol[3] = 255;
+                            } else {
+                                dcol[0] = 80; dcol[1] = 160; dcol[2] = 240; dcol[3] = 255;
+                            }
+                            vk_draw_rounded_rect(g_editor_draw, x + 4.0f, vis_lines[v].y - 8.0f, 6.0f, 6.0f, 3.0f, 1.0f, dcol);
+                        }
+                    }
                 } else {
                     uint8_t wrap_dot[4];
                     memcpy(wrap_dot, th->gutter_fg, 4);

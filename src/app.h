@@ -21,6 +21,7 @@
 #include "fonts.h"
 #include "editor.h"
 #include "icon.h"
+#include "lsp.h"
 
 #define MAX_TABS 16
 #define PROJECT_PATH_MAX 1024
@@ -140,6 +141,18 @@ typedef struct App {
     char   available_themes[128][64];
     int    available_theme_count;
     char   theme_picker_orig[64];
+
+    /* Language Server Protocol (LSP) */
+    LspClient lsp;
+    bool      completion_open;
+    int       completion_sel;
+    int       completion_scroll;
+    float     completion_anchor_x;
+    float     completion_anchor_y;
+
+    bool      hover_open;
+    float     hover_x;
+    float     hover_y;
 } App;
 
 /* Implemented in main.c */

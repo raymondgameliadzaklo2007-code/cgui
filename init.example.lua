@@ -9,6 +9,7 @@ cgui.config = {
   font_size = 15,          -- Default editor font size
   soft_wrap = false,       -- Toggle soft line wrapping
   line_numbers = true,     -- Show or hide gutter line numbers
+  lsp_server = "clangd",   -- LSP server executable ("clangd", "rust-analyzer", "gopls")
 }
 
 -- ============================================================================
@@ -28,5 +29,9 @@ end, "Theme: Toggle Dark / Light", "Alt+T")
 cgui.keymap.bind("F2", "theme:picker")
 cgui.keymap.bind("Alt+T", "theme:toggle")
 cgui.keymap.bind("Ctrl+Shift+P", "palette:open")
+cgui.keymap.bind("Ctrl+Space", "lsp:complete")
+cgui.keymap.bind("F12", "lsp:definition")
+cgui.keymap.bind("Alt+K", "lsp:hover")
+cgui.keymap.bind("Ctrl+Shift+I", "lsp:format")
 
 cgui.log("cgui Lua configuration loaded successfully.")

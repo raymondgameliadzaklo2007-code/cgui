@@ -79,9 +79,18 @@ bool tab_add(App *app, const char *path_or_null, const char *initial)
     if (!editor_create(ed, &app->font, initial ? initial : ""))
         return false;
     ed->soft_wrap = app->soft_wrap;
+    editor_set_lsp(ed, &app->lsp);
     if (path_or_null && path_or_null[0]) {
         if (!editor_load_file(ed, path_or_null)) {
             /* keep empty tab with path attempt failed - still usable */
+        } else {
+            size_t len = editor_length(ed);
+            char *text = malloc(len + 1);
+            if (text) {
+                editor_get_text(ed, text, len + 1);
+                lsp_doc_did_open(&app->lsp, ed->path, text, len);
+                free(text);
+            }
         }
     }
     app->tab_active = app->tab_count;
@@ -94,6 +103,8 @@ bool tab_add(App *app, const char *path_or_null, const char *initial)
 void tab_remove_at(App *app, int index)
 {
     if (index < 0 || index >= app->tab_count) return;
+    if (app->tabs[index].path[0])
+        lsp_doc_did_close(&app->lsp, app->tabs[index].path);
     editor_destroy(&app->tabs[index]);
     for (int j = index; j < app->tab_count - 1; ++j)
         app->tabs[j] = app->tabs[j + 1];

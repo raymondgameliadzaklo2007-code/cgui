@@ -25,6 +25,7 @@
 #include "palette.h"
 #include "theme.h"
 #include "lua_bridge.h"
+#include "lsp.h"
 
 static void draw_status_bar(App *app, VkContext *ctx)
 {
@@ -42,12 +43,27 @@ static void draw_status_bar(App *app, VkContext *ctx)
 
     Editor *ed = app_ed(app);
     char left[sizeof(((Editor *)0)->path) + 8];
+    char center[256];
     char right[128];
+    center[0] = 0;
+
     if (ed) {
         const char *path = ed->path[0] ? ed->path : "Untitled";
         snprintf(left, sizeof(left), "%s%s", ed->dirty ? "• " : "", path);
-        snprintf(right, sizeof(right), "Ln %d, Col %d",
-                 editor_current_line(ed), editor_current_col(ed));
+
+        /* LSP status and diagnostic on current line */
+        const LspDiagnostic *d = NULL;
+        if (app->lsp.diagnostic_count > 0 &&
+            lsp_diagnostics_for_line(&app->lsp, editor_current_line(ed), &d) > 0 && d) {
+            snprintf(center, sizeof(center), "%s: %s",
+                     d->severity == LSP_SEV_ERROR ? "✖ Error" : "▲ Warning",
+                     d->message);
+        }
+
+        const char *lsp_stat = (app->lsp.state == LSP_STATE_RUNNING) ? "clangd" :
+                               (app->lsp.state == LSP_STATE_STARTING) ? "lsp starting…" : "no lsp";
+        snprintf(right, sizeof(right), "%s  |  Ln %d, Col %d",
+                 lsp_stat, editor_current_line(ed), editor_current_col(ed));
     } else {
         snprintf(left, sizeof(left), "No buffer");
         right[0] = 0;
@@ -55,6 +71,11 @@ static void draw_status_bar(App *app, VkContext *ctx)
 
     float baseline = y + (bar_h + app->font.ascent + app->font.descent) * 0.5f;
     font_draw(&app->font, ctx, 12.0f, baseline, left, text);
+    if (center[0]) {
+        uint8_t diag_c[4] = { 242, 201, 76, 255 };
+        if (strstr(center, "Error")) { diag_c[0] = 235; diag_c[1] = 87; diag_c[2] = 87; }
+        font_draw(&app->font, ctx, w * 0.28f, baseline, center, diag_c);
+    }
     float rw = font_measure(&app->font, right);
     font_draw(&app->font, ctx, w - rw - 14.0f, baseline, right, text);
 }
@@ -530,6 +551,46 @@ static void cmd_toggle_soft_wrap(App *app)
         app->tabs[i].soft_wrap = app->soft_wrap;
 }
 
+static void cmd_lsp_complete(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0]) return;
+    float cx = 0, cy = 0;
+    editor_caret_pixel_pos(ed, &cx, &cy);
+    app->completion_anchor_x = cx;
+    app->completion_anchor_y = cy;
+    app->completion_open = true;
+    app->completion_sel = 0;
+    app->completion_scroll = 0;
+    lsp_request_completion(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+}
+
+static void cmd_lsp_definition(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0]) return;
+    lsp_request_definition(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+}
+
+static void cmd_lsp_hover(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0]) return;
+    float cx = 0, cy = 0;
+    editor_caret_pixel_pos(ed, &cx, &cy);
+    app->hover_x = cx;
+    app->hover_y = cy;
+    app->hover_open = true;
+    lsp_request_hover(&app->lsp, ed->path, editor_current_line(ed), editor_current_col(ed));
+}
+
+static void cmd_lsp_format(App *app)
+{
+    Editor *ed = app_ed(app);
+    if (!ed || !ed->path[0]) return;
+    lsp_request_format(&app->lsp, ed->path);
+}
+
 const Command app_commands[] = {
     { "File: New File",          "Ctrl+N",       cmd_new_file },
     { "File: Open File…",        "Ctrl+O",       cmd_open_file },
@@ -542,6 +603,10 @@ const Command app_commands[] = {
     { "Search: Find",            "Ctrl+F",       cmd_find },
     { "Search: Replace",         "Ctrl+H",       cmd_replace },
     { "Go: Go to Line…",         "Ctrl+G",       cmd_goto_line },
+    { "LSP: Trigger Autocompletion", "Ctrl+Space", cmd_lsp_complete },
+    { "LSP: Go to Definition",   "F12",          cmd_lsp_definition },
+    { "LSP: Hover Documentation", "Alt+K",       cmd_lsp_hover },
+    { "LSP: Format Document",    "Ctrl+Shift+I", cmd_lsp_format },
     { "Preferences: Color Theme…", "F2",         cmd_select_theme },
     { "Preferences: Toggle Dark / Light Theme", "Alt+T", cmd_toggle_theme },
     { "View: Select Font…",      "F1",           cmd_select_font },
@@ -721,10 +786,17 @@ int main(int argc, char **argv)
     if (app.icons_ok)
         project_icons_load(&app);
 
+    /* Initialize Language Server Protocol (clangd) */
+    lsp_init(&app.lsp, "clangd", app.project_root[0] ? app.project_root : NULL);
+    for (int i = 0; i < app.tab_count; ++i)
+        editor_set_lsp(&app.tabs[i], &app.lsp);
+
     SDL_StartTextInput(window);
     printf("Ready – %zu fonts available. Press F1 to pick.\n", app.fonts.count);
 
     while (app.running) {
+        lsp_update(&app);
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_EVENT_QUIT ||
@@ -742,6 +814,9 @@ int main(int argc, char **argv)
                 continue;
             }
             if (app.save_dialog_open)
+                continue;
+
+            if (lsp_handle_event(&app, &ev))
                 continue;
 
             if (app.palette_open) {
@@ -770,6 +845,24 @@ int main(int argc, char **argv)
 
                 if (alt && !ctrl && ev.key.key == SDLK_T) {
                     cmd_toggle_theme(&app);
+                    continue;
+                }
+
+                /* LSP Shortcuts */
+                if (!app.picker_open && !app.theme_picker_open && ctrl && ev.key.key == SDLK_SPACE) {
+                    cmd_lsp_complete(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && ev.key.key == SDLK_F12) {
+                    cmd_lsp_definition(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && (alt || ctrl) && ev.key.key == SDLK_K) {
+                    cmd_lsp_hover(&app);
+                    continue;
+                }
+                if (!app.picker_open && !app.theme_picker_open && ctrl && shift && ev.key.key == SDLK_I) {
+                    cmd_lsp_format(&app);
                     continue;
                 }
 
@@ -859,6 +952,7 @@ int main(int argc, char **argv)
                         file_save_as_dialog(&app);
                     else {
                         editor_save_file(app_ed(&app), NULL);
+                        lsp_doc_did_save(&app.lsp, app_ed(&app)->path);
                         update_window_title(&app);
                     }
                     continue;
@@ -1002,6 +1096,8 @@ int main(int argc, char **argv)
         if (app.palette_open)
             draw_palette(&app, &app.vk);
 
+        lsp_draw_ui(&app, &app.vk);
+
         if (!vk_context_end_frame(&app.vk))
             app.framebuffer_resized = true;
     }
@@ -1015,6 +1111,7 @@ int main(int argc, char **argv)
         icon_destroy(&app.icon_close, &app.vk);
         icon_renderer_destroy(&app.icons);
     }
+    lsp_destroy(&app.lsp);
     font_destroy(&app.font);
     font_list_free(&app.fonts);
     free(app.text_vert);

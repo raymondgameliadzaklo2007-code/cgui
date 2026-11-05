@@ -186,6 +186,11 @@ bool highlight_init(Highlighter *hl)
         return false;
     }
 
+    uint32_t err_offset = 0;
+    TSQueryError err = TSQueryErrorNone;
+    int rules_accepted = 0;
+    TSQuery *query = NULL;
+
     /* 1. Try loading external Helix / Neovim .scm query file from disk */
     const char *scm_paths[] = {
 #ifdef CGUI_DEFAULT_QUERIES_PATH
@@ -196,13 +201,10 @@ bool highlight_init(Highlighter *hl)
         NULL
     };
 
-    TSQuery *query = NULL;
     for (size_t i = 0; scm_paths[i] != NULL; ++i) {
         size_t slen = 0;
         char *stext = load_scm_file(scm_paths[i], &slen);
         if (stext) {
-            uint32_t err_offset = 0;
-            TSQueryError err = TSQueryErrorNone;
             query = ts_query_new(lang, stext, (uint32_t)slen, &err_offset, &err);
             if (query) {
                 printf("Tree-sitter C query loaded from %s\n", scm_paths[i]);
@@ -223,13 +225,12 @@ bool highlight_init(Highlighter *hl)
         }
         query_buf[0] = '\0';
         size_t query_len = 0;
-        int rules_accepted = 0;
 
         for (size_t i = 0; QUERY_RULES[i] != NULL; ++i) {
             const char *rule = QUERY_RULES[i];
-            uint32_t err_offset = 0;
-            TSQueryError err = TSQueryErrorNone;
-            TSQuery *test_q = ts_query_new(lang, rule, (uint32_t)strlen(rule), &err_offset, &err);
+            uint32_t test_off = 0;
+            TSQueryError test_err = TSQueryErrorNone;
+            TSQuery *test_q = ts_query_new(lang, rule, (uint32_t)strlen(rule), &test_off, &test_err);
             if (test_q) {
                 ts_query_delete(test_q);
                 size_t rlen = strlen(rule);
@@ -246,15 +247,10 @@ bool highlight_init(Highlighter *hl)
             }
         }
 
-        uint32_t err_offset = 0;
-        TSQueryError err = TSQueryErrorNone;
         if (query_len > 0) {
             query = ts_query_new(lang, query_buf, (uint32_t)query_len, &err_offset, &err);
         }
         free(query_buf);
-        if (query) {
-            printf("Tree-sitter C highlighter ready (%d rules active)\n", rules_accepted);
-        }
     }
 
     if (!query) {
@@ -268,7 +264,11 @@ bool highlight_init(Highlighter *hl)
     hl->query = query;
     hl->need_full = true;
     hl->ready = true;
-    printf("Tree-sitter C highlighter ready (%d rules active)\n", rules_accepted);
+    if (rules_accepted > 0) {
+        printf("Tree-sitter C highlighter ready (%d rules active)\n", rules_accepted);
+    } else {
+        printf("Tree-sitter C highlighter ready\n");
+    }
     return true;
 }
 

@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <math.h>
+#include <unistd.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -148,6 +149,75 @@ static VkShaderModule make_module(VkDevice dev, const uint32_t *code, size_t wor
 typedef struct Packer { int x, y, row_h; } Packer;
 enum { PACK_OK = 0, PACK_SKIP = 1, PACK_FULL = -1 };
 
+typedef struct UnicodeRange {
+    uint32_t start;
+    uint32_t end;
+} UnicodeRange;
+
+/* Priority Unicode codepoint ranges for Nerd Font icons and terminal symbols */
+static const UnicodeRange s_priority_ranges[] = {
+    { 0x2500, 0x259F },   /* Box Drawing & Block Elements */
+    { 0x2190, 0x21FF },   /* Arrows */
+    { 0x2300, 0x23FF },   /* Miscellaneous Technical */
+    { 0x2600, 0x26FF },   /* Miscellaneous Symbols */
+    { 0x2700, 0x27BF },   /* Dingbats */
+    { 0x2B00, 0x2BFF },   /* Miscellaneous Symbols and Arrows */
+    { 0xE000, 0xF8FF },   /* Private Use Area (Nerd Font Core: Devicons, FontAwesome, etc.) */
+    { 0xE0A0, 0xE0D4 },   /* Powerline symbols & extra */
+    { 0xEA60, 0xEBEB },   /* VS Code Codicons */
+    { 0xF000, 0xF2E0 },   /* Font Awesome / Octicons */
+    { 0xF0000, 0xF1AF0 }, /* Material Design Icons (Nerd Font v3 PUA) */
+};
+#define NUM_PRIORITY_RANGES (sizeof(s_priority_ranges) / sizeof(s_priority_ranges[0]))
+
+static uint32_t utf8_decode_char(const char *p, size_t *out_len)
+{
+    if (!p || !*p) {
+        if (out_len) *out_len = 0;
+        return 0;
+    }
+    const unsigned char *s = (const unsigned char *)p;
+    if (s[0] < 0x80) {
+        if (out_len) *out_len = 1;
+        return s[0];
+    } else if ((s[0] & 0xE0) == 0xC0) {
+        if ((s[1] & 0xC0) == 0x80) {
+            if (out_len) *out_len = 2;
+            return ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+        }
+    } else if ((s[0] & 0xF0) == 0xE0) {
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+            if (out_len) *out_len = 3;
+            return ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        }
+    } else if ((s[0] & 0xF8) == 0xF0) {
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
+            if (out_len) *out_len = 4;
+            return ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        }
+    }
+    if (out_len) *out_len = 1;
+    return s[0];
+}
+
+static const char *find_nerd_font_fallback(void)
+{
+    static const char *candidates[] = {
+        "assets/fonts/SymbolsNerdFontMono-Regular.ttf",
+        "assets/fonts/SymbolsNerdFont-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        if (access(candidates[i], R_OK) == 0) {
+            return candidates[i];
+        }
+    }
+    return NULL;
+}
+
+
 /* Rasterize one glyph with light hinting and shelf-pack it into the atlas. */
 static int pack_glyph(Font *f, FT_Face face, FT_UInt gindex, int shift26,
                       Packer *pk, FontGlyph *fg)
@@ -209,14 +279,9 @@ static int pack_glyph(Font *f, FT_Face face, FT_UInt gindex, int shift26,
 
 static bool bake_atlas(Font *f, FT_Face face)
 {
-    /* Size the atlas to the font: ASCII (x4 quarter-pixel variants if it might be
-       proportional and small) with margin, plus room for a share of the extras. */
-    const bool large = f->ppem >= FONT_HINT_MAX_PPEM;
-    const double glyph_area = (double)f->ppem * (double)f->ppem * 0.6 + 16.0;
-    const double need = glyph_area * 95.0 * (large ? 1.0 : 4.0) * 1.4
-                      + glyph_area * (double)MAX_EXTRA_GLYPHS * 0.5;
-    int side = ATLAS_MIN;
-    while ((double)side * (double)side < need && side < ATLAS_MAX) side *= 2;
+    /* Size atlas to fit ASCII, Nerd font glyphs, and fallback symbols.
+       2048x2048 provides ample room (~10,000 glyphs at typical coding ppem). */
+    int side = 2048;
     f->atlas_w = f->atlas_h = side;
     f->atlas_pixels = calloc((size_t)f->atlas_w * (size_t)f->atlas_h, 1);
     f->by_index_count = (unsigned int)face->num_glyphs;
@@ -227,7 +292,7 @@ static bool bake_atlas(Font *f, FT_Face face)
     Packer pk = { ATLAS_PAD, ATLAS_PAD, 0 };
     bool full = false;
 
-    /* ASCII first so it is guaranteed to fit. */
+    /* 1. ASCII first so it is guaranteed to fit. */
     for (int c = 32; c < 128 && !full; ++c) {
         FT_UInt gi = FT_Get_Char_Index(face, (FT_ULong)c);
         if (gi >= f->by_index_count) continue;
@@ -244,8 +309,8 @@ static bool bake_atlas(Font *f, FT_Face face)
     if (!f->mono && f->glyphs['i'].present && f->glyphs['M'].present)
         f->mono = fabsf(f->glyphs['i'].advance - f->glyphs['M'].advance) < 0.01f;
 
-    /* Proportional fonts: quarter-pixel variants of ASCII for accurate spacing
-       without blurring (each variant is still rasterized once, crisply). */
+    /* Proportional fonts: quarter-pixel variants of ASCII for accurate spacing. */
+    const bool large = f->ppem >= FONT_HINT_MAX_PPEM;
     if (!f->mono && !large) {
         for (int q = 1; q < 4 && !full; ++q) {
             for (int c = 32; c < 128 && !full; ++c) {
@@ -257,17 +322,47 @@ static bool bake_atlas(Font *f, FT_Face face)
         }
     }
 
-    /* Then as much of the rest as fits: ligature/alternate glyphs, Latin-1,
-       box drawing, ... Looked up by glyph id straight from HarfBuzz output. */
-    int extra = 0;
-    for (FT_UInt gi = 0; gi < f->by_index_count && !full && extra < MAX_EXTRA_GLYPHS; ++gi) {
+    /* 2. Priority Unicode ranges: Nerd Font icons & terminal symbols in primary face */
+    for (size_t r_idx = 0; r_idx < NUM_PRIORITY_RANGES && !full; ++r_idx) {
+        uint32_t start = s_priority_ranges[r_idx].start;
+        uint32_t end = s_priority_ranges[r_idx].end;
+        for (uint32_t cp = start; cp <= end && !full; ++cp) {
+            FT_UInt gi = FT_Get_Char_Index(face, (FT_ULong)cp);
+            if (gi == 0 || gi >= f->by_index_count || f->by_index[gi].present)
+                continue;
+            int r = pack_glyph(f, face, gi, 0, &pk, &f->by_index[gi]);
+            if (r == PACK_FULL) full = true;
+        }
+    }
+
+    /* 3. Priority Unicode ranges in fallback face if primary face misses them */
+    if (f->fallback_face && !full) {
+        FT_Face fb_face = (FT_Face)f->fallback_face;
+        f->fallback_by_index_count = (unsigned int)fb_face->num_glyphs;
+        f->fallback_by_index = calloc(f->fallback_by_index_count ? f->fallback_by_index_count : 1, sizeof(FontGlyph));
+        if (f->fallback_by_index) {
+            f->has_fallback = true;
+            for (size_t r_idx = 0; r_idx < NUM_PRIORITY_RANGES && !full; ++r_idx) {
+                uint32_t start = s_priority_ranges[r_idx].start;
+                uint32_t end = s_priority_ranges[r_idx].end;
+                for (uint32_t cp = start; cp <= end && !full; ++cp) {
+                    FT_UInt fb_gi = FT_Get_Char_Index(fb_face, (FT_ULong)cp);
+                    if (fb_gi == 0 || fb_gi >= f->fallback_by_index_count || f->fallback_by_index[fb_gi].present)
+                        continue;
+                    int r = pack_glyph(f, fb_face, fb_gi, 0, &pk, &f->fallback_by_index[fb_gi]);
+                    if (r == PACK_FULL) full = true;
+                }
+            }
+        }
+    }
+
+    /* 4. Pack additional glyphs from primary font up to capacity */
+    for (FT_UInt gi = 0; gi < f->by_index_count && !full; ++gi) {
         if (f->by_index[gi].present) continue;
         int r = pack_glyph(f, face, gi, 0, &pk, &f->by_index[gi]);
         if (r == PACK_FULL) full = true;
-        else if (r == PACK_OK) ++extra;
     }
-    /* "full" while baking the optional extras is normal for big sizes; only
-       complain if the ASCII set itself didn't fit. */
+
     for (int c = 32; c < 127; ++c) {
         if (!f->glyphs[c].present && FT_Get_Char_Index(face, (FT_ULong)c)) {
             fprintf(stderr, "font: atlas too small, ASCII glyphs missing (size %d)\n", f->atlas_w);
@@ -681,6 +776,20 @@ bool font_create(Font *out, VkContext *ctx,
     out->line_gap = out->line_height - (out->ascent - out->descent);
     if (out->line_gap < 0.0f) out->line_gap = 0.0f;
 
+    /* Load fallback symbols / Nerd Font face if available */
+    const char *fallback_path = find_nerd_font_fallback();
+    if (fallback_path) {
+        FT_Face fb_face = NULL;
+        if (FT_New_Face(library, fallback_path, 0, &fb_face) == 0) {
+            if ((float)px >= FONT_HINT_MAX_PPEM) {
+                FT_Set_Char_Size(fb_face, 0, (FT_F26Dot6)(physical * 64.0f + 0.5f), 72, 72);
+            } else {
+                FT_Set_Pixel_Sizes(fb_face, 0, (FT_UInt)px);
+            }
+            out->fallback_face = fb_face;
+        }
+    }
+
     if (!bake_atlas(out, face))
         goto fail;
 
@@ -704,8 +813,9 @@ bool font_create(Font *out, VkContext *ctx,
     if (!gpu_create_pipeline(out, vert_spv, vert_n, frag_spv, frag_n)) goto fail;
 
     out->ready = true;
-    printf("Font ready (FT light + HB): %s  logical %.1fpx  raster %dpx  scale %.2f  %s\n",
-           ttf_path, pixel_height, px, dpi_scale, out->mono ? "mono" : "proportional");
+    printf("Font ready (FT light + HB): %s  logical %.1fpx  raster %dpx  scale %.2f  %s (fallback: %s)\n",
+           ttf_path, pixel_height, px, dpi_scale, out->mono ? "mono" : "proportional",
+           out->has_fallback ? fallback_path : "none");
     return true;
 
 fail:
@@ -721,6 +831,7 @@ void font_destroy(Font *f)
     if (!f) return;
     if (f->hb_buf) hb_buffer_destroy((hb_buffer_t *)f->hb_buf);
     if (f->hb_font) hb_font_destroy((hb_font_t *)f->hb_font);
+    if (f->fallback_face) FT_Done_Face((FT_Face)f->fallback_face);
     if (f->ft_face) FT_Done_Face((FT_Face)f->ft_face);
     if (f->ft_library) FT_Done_FreeType((FT_Library)f->ft_library);
 
@@ -743,6 +854,7 @@ void font_destroy(Font *f)
     }
     free(f->atlas_pixels);
     free(f->by_index);
+    free(f->fallback_by_index);
     free(f->path);
     memset(f, 0, sizeof(*f));
 }
@@ -839,7 +951,15 @@ float font_measure_n(const Font *f, const char *text, size_t n)
     hb_glyph_position_t *pos = hb_buffer_get_glyph_positions(buf, &count);
     for (unsigned int i = 0; i < count; ++i) {
         if (text[info[i].cluster] == '\n') continue;
-        w += adv_device(f, (float)pos[i].x_advance / 64.0f);
+        float adv = (float)pos[i].x_advance / 64.0f;
+        if (pos[i].x_advance == 0 && f->has_fallback && f->fallback_face) {
+            uint32_t cp = utf8_decode_char(&text[info[i].cluster], NULL);
+            FT_UInt fb_gi = FT_Get_Char_Index((FT_Face)f->fallback_face, (FT_ULong)cp);
+            if (fb_gi > 0 && fb_gi < f->fallback_by_index_count && f->fallback_by_index[fb_gi].present) {
+                adv = f->fallback_by_index[fb_gi].advance * s;
+            }
+        }
+        w += adv_device(f, adv);
     }
     return w / s;
 }
@@ -971,10 +1091,23 @@ void font_draw(Font *f, VkContext *ctx,
         if (src == '\n') { pen_x = x_dev; pen_y += line_dev; continue; }
 
         unsigned int gid = info[i].codepoint;
+        const FontGlyph *g = NULL;
+
         if (src >= 32 && gid < f->by_index_count && f->by_index[gid].present) {
+            g = &f->by_index[gid];
+        } else if (f->has_fallback && f->fallback_face) {
+            /* Try fallback font */
+            uint32_t cp = utf8_decode_char(&text[info[i].cluster], NULL);
+            FT_UInt fb_gi = FT_Get_Char_Index((FT_Face)f->fallback_face, (FT_ULong)cp);
+            if (fb_gi > 0 && fb_gi < f->fallback_by_index_count && f->fallback_by_index[fb_gi].present) {
+                g = &f->fallback_by_index[fb_gi];
+            }
+        }
+
+        float x_advance = (float)pos[i].x_advance / 64.0f;
+        if (g) {
             const float ox = pen_x + (float)pos[i].x_offset / 64.0f;
             const float oy = roundf(pen_y - (float)pos[i].y_offset / 64.0f);
-            const FontGlyph *g = &f->by_index[gid];
             float ix = roundf(ox);
 
             /* Proportional ASCII: pick the nearest quarter-pixel variant. */
@@ -989,8 +1122,11 @@ void font_draw(Font *f, VkContext *ctx,
                     ix = roundf(ox);
             }
             batch_add(&batch, g, ix, oy);
+            if (x_advance <= 0.0f) {
+                x_advance = g->advance * s;
+            }
         }
-        pen_x += adv_device(f, (float)pos[i].x_advance / 64.0f);
+        pen_x += adv_device(f, x_advance);
         pen_y -= (float)pos[i].y_advance / 64.0f;   /* HB y-up -> screen y-down */
     }
     batch_flush(&batch);

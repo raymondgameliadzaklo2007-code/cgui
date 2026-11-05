@@ -386,9 +386,13 @@ static void term_parse_bytes(Terminal *term, const char *buf, size_t len)
                 term_put_char(term, &buf[i], seq_len);
                 i += seq_len;
             } else {
-                /* Incomplete UTF-8 tail, output ASCII space or advance */
-                term_put_char(term, (const char *)&b, 1);
-                i++;
+                /* Incomplete UTF-8 sequence at end of chunk: buffer in utf8_tail */
+                size_t rem = len - i;
+                if (rem < sizeof(term->utf8_tail)) {
+                    memcpy(term->utf8_tail, &buf[i], rem);
+                    term->utf8_tail_len = rem;
+                }
+                break;
             }
         } else if (term->parse_state == TERM_STATE_ESC) {
             if (b == '[') {
@@ -632,10 +636,19 @@ void terminal_update(Terminal *term)
         return;
     }
 
-    char buf[4096];
+    char raw_buf[4096];
+    char buf[4104];
     ssize_t n = 0;
-    while ((n = read(term->master_fd, buf, sizeof(buf))) > 0) {
-        term_parse_bytes(term, buf, (size_t)n);
+    while ((n = read(term->master_fd, raw_buf, sizeof(raw_buf))) > 0) {
+        size_t total_len = 0;
+        if (term->utf8_tail_len > 0) {
+            memcpy(buf, term->utf8_tail, term->utf8_tail_len);
+            total_len = term->utf8_tail_len;
+            term->utf8_tail_len = 0;
+        }
+        memcpy(&buf[total_len], raw_buf, (size_t)n);
+        total_len += (size_t)n;
+        term_parse_bytes(term, buf, total_len);
         /* If user is actively receiving command output, snap back down */
         if (term->scroll_offset > 0)
             term->scroll_offset = 0;
@@ -753,20 +766,44 @@ void terminal_draw(Terminal *term, VkContext *ctx, VkDraw *draw, Font *font,
         /* Batch contiguous runs of same foreground color and flags */
         int start_col = 0;
         while (start_col < term->cols) {
-            if (row_cells[start_col].c[0] == 0 || row_cells[start_col].c[0] == ' ') {
+            const TermCell *first = &row_cells[start_col];
+            if (first->c[0] == 0 || first->c[0] == ' ') {
                 start_col++;
                 continue;
             }
 
+            const uint8_t *fg = first->fg;
+            uint8_t flags = first->flags;
+            uint8_t draw_fg[4];
+            memcpy(draw_fg, fg, 4);
+            if (flags & TERM_FLAG_DIM) {
+                draw_fg[0] /= 2;
+                draw_fg[1] /= 2;
+                draw_fg[2] /= 2;
+            }
+            float draw_baseline = line_y + baseline_offset;
+
+            /* If it's a non-ASCII / Nerd Font character, draw it anchored to its exact grid cell */
+            if ((unsigned char)first->c[0] >= 0x80) {
+                float draw_x = x + pad_x + (float)start_col * cw;
+                font_draw(font, ctx, draw_x, draw_baseline, first->c, draw_fg);
+                if (flags & TERM_FLAG_UNDERLINE) {
+                    vk_draw_rounded_rect(draw, draw_x, line_y + ch - 1.0f,
+                                         cw, 1.0f, 0.0f, 0.0f, draw_fg);
+                }
+                start_col++;
+                continue;
+            }
+
+            /* Contiguous ASCII run */
             int end_col = start_col;
             char line_buf[512] = {0};
             size_t buf_pos = 0;
-            const uint8_t *fg = row_cells[start_col].fg;
-            uint8_t flags = row_cells[start_col].flags;
 
             while (end_col < term->cols) {
                 const TermCell *c = &row_cells[end_col];
                 if (c->c[0] == 0) break;
+                if ((unsigned char)c->c[0] >= 0x80) break; /* stop before non-ASCII */
                 if (c->fg[0] != fg[0] || c->fg[1] != fg[1] || c->fg[2] != fg[2] || c->flags != flags)
                     break;
                 size_t clen = strlen(c->c);
@@ -782,14 +819,6 @@ void terminal_draw(Terminal *term, VkContext *ctx, VkDraw *draw, Font *font,
             if (buf_pos > 0) {
                 line_buf[buf_pos] = 0;
                 float draw_x = x + pad_x + (float)start_col * cw;
-                float draw_baseline = line_y + baseline_offset;
-                uint8_t draw_fg[4];
-                memcpy(draw_fg, fg, 4);
-                if (flags & TERM_FLAG_DIM) {
-                    draw_fg[0] /= 2;
-                    draw_fg[1] /= 2;
-                    draw_fg[2] /= 2;
-                }
                 font_draw(font, ctx, draw_x, draw_baseline, line_buf, draw_fg);
                 if (flags & TERM_FLAG_UNDERLINE) {
                     vk_draw_rounded_rect(draw, draw_x, line_y + ch - 1.0f,

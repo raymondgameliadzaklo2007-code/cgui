@@ -72,6 +72,10 @@ typedef struct Terminal {
     uint8_t   cur_bg[4];
     uint8_t   cur_flags;
 
+    /* Incomplete UTF-8 sequence buffer across read() boundaries */
+    char      utf8_tail[8];
+    size_t    utf8_tail_len;
+
     /* Theme colors */
     uint8_t   default_fg[4];
     uint8_t   default_bg[4];

@@ -84,6 +84,12 @@ typedef struct Font {
     void *hb_face;
     void *hb_font;
 
+    /* Fallback face for Nerd Fonts / symbols */
+    void *fallback_face;
+    FontGlyph *fallback_by_index;
+    unsigned int fallback_by_index_count;
+    bool has_fallback;
+
     bool mono;           /* fixed-width: integer device-pixel advances */
     float ppem;          /* actual raster size in device pixels */
     int load_flags;      /* FreeType flags used for atlas + shaping (light hinting, or none when large) */

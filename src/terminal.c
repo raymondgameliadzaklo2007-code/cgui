@@ -1,6 +1,12 @@
-#define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
-#define _GNU_SOURCE
+#ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _DEFAULT_SOURCE
+#  define _DEFAULT_SOURCE
+#endif
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 
 /**
  * terminal.c – Integrated pseudo-terminal (PTY) and ANSI emulator for cgui
@@ -92,12 +98,12 @@ static void term_sync_theme(Terminal *term)
 {
     const Theme *th = theme_current();
     if (th) {
-        memcpy(term->default_fg, th->editor_fg, 4);
-        memcpy(term->default_bg, th->editor_bg, 4);
+        memcpy(term->default_fg, th->fg, 4);
+        memcpy(term->default_bg, th->bg, 4);
         memcpy(term->cursor_color, th->caret, 4);
-        memcpy(term->header_bg, th->tab_bar_bg, 4);
-        memcpy(term->header_border, th->tab_bar_edge, 4);
-        memcpy(term->header_fg, th->tab_fg, 4);
+        memcpy(term->header_bg, th->tab_strip_bg, 4);
+        memcpy(term->header_border, th->tab_edge, 4);
+        memcpy(term->header_fg, th->tab_text_active, 4);
     } else {
         uint8_t dfg[4] = { 220, 224, 230, 255 };
         uint8_t dbg[4] = { 24, 26, 31, 255 };
@@ -922,11 +928,17 @@ bool terminal_handle_event(Terminal *term, App *app, const SDL_Event *ev)
 
     /* Keyboard navigation & control keys */
     if (ev->type == SDL_EVENT_KEY_DOWN) {
-        SDL_Keycode k = ev.key.key;
-        SDL_Keymod mod = ev.key.mod;
+        SDL_Keycode k = ev->key.key;
+        SDL_Keymod mod = ev->key.mod;
         bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
         bool shift = (mod & SDL_KMOD_SHIFT) != 0;
         bool alt = (mod & SDL_KMOD_ALT) != 0;
+
+        /* Allow Ctrl+` to toggle terminal closed from inside */
+        if ((ctrl || (mod & SDL_KMOD_GUI)) && (k == SDLK_GRAVE || k == '`')) {
+            terminal_toggle(app);
+            return true;
+        }
 
         /* Clipboard Paste: Ctrl+Shift+V */
         if (ctrl && shift && (k == SDLK_V || k == 'v')) {

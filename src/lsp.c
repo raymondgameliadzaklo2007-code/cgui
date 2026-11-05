@@ -1,6 +1,12 @@
-#define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
-#define _GNU_SOURCE
+#ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _DEFAULT_SOURCE
+#  define _DEFAULT_SOURCE
+#endif
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 
 /**
  * lsp.c – Language Server Protocol (LSP) client implementation for cgui
@@ -838,7 +844,10 @@ static void handle_completion_response(LspClient *lsp, const char *msg, App *app
 
         if (item->label[0]) {
             if (!item->insert_text[0]) {
-                snprintf(item->insert_text, sizeof(item->insert_text), "%s", item->label);
+                size_t llen = strlen(item->label);
+                if (llen >= sizeof(item->insert_text)) llen = sizeof(item->insert_text) - 1;
+                memcpy(item->insert_text, item->label, llen);
+                item->insert_text[llen] = '\0';
             }
             lsp->raw_completion_count++;
         }
@@ -1120,7 +1129,11 @@ static void handle_references_response(LspClient *lsp, const char *msg, App *app
             json_parse_str(uri_p, uri, sizeof(uri));
             uri_to_path(uri, ref->path, sizeof(ref->path));
             const char *slash = strrchr(ref->path, '/');
-            snprintf(ref->filename, sizeof(ref->filename), "%s", slash ? slash + 1 : ref->path);
+            const char *name_src = slash ? slash + 1 : ref->path;
+            size_t nlen = strlen(name_src);
+            if (nlen >= sizeof(ref->filename)) nlen = sizeof(ref->filename) - 1;
+            memcpy(ref->filename, name_src, nlen);
+            ref->filename[nlen] = '\0';
         }
 
         const char *range = json_find_property(p, "range");
@@ -1172,7 +1185,10 @@ static void handle_references_response(LspClient *lsp, const char *msg, App *app
                             while (*s == ' ' || *s == '\t') s++;
                             char *nl = strpbrk(s, "\r\n");
                             if (nl) *nl = '\0';
-                            snprintf(ref->preview, sizeof(ref->preview), "%s", s);
+                            size_t slen = strlen(s);
+                            if (slen >= sizeof(ref->preview)) slen = sizeof(ref->preview) - 1;
+                            memcpy(ref->preview, s, slen);
+                            ref->preview[slen] = '\0';
                             break;
                         }
                         cur_l++;
@@ -1805,6 +1821,7 @@ void lsp_draw_ui(App *app, VkContext *ctx)
         float x = app->sig_help_x;
         float y = app->sig_help_y - h - app->font.ascent - 8.0f;
         if (y < 32.0f) y = app->sig_help_y + 16.0f;
+        if (y + h > screen_h - 28.0f) y = screen_h - h - 28.0f;
         if (x + w > screen_w - 12.0f) x = screen_w - w - 12.0f;
         if (x < 12.0f) x = 12.0f;
 

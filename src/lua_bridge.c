@@ -1199,7 +1199,9 @@ bool lua_bridge_init(void)
     lua_setglobal(g_L, "cgui");
 
     /* Register 'cgui' in package.preload so require("cgui") works in user configs */
-    luaL_dostring(g_L, "package.preload['cgui'] = function() return cgui end");
+    if (luaL_dostring(g_L, "package.preload['cgui'] = function() return cgui end") != LUA_OK) {
+        lua_pop(g_L, 1);
+    }
 
     return true;
 }

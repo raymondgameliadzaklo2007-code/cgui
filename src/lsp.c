@@ -1,3 +1,7 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+#define _GNU_SOURCE
+
 /**
  * lsp.c – Language Server Protocol (LSP) client implementation for cgui
  */
@@ -13,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>

@@ -45,7 +45,7 @@ glslang = find_program('glslangValidator', 'glslang', required: true)
 if not cc.has_argument('-std=c23')
   error('A C compiler with C23 support is required')
 endif
-add_project_arguments('-std=c23', language: 'c')
+add_project_arguments('-std=c23', '-D_POSIX_C_SOURCE=200809L', '-D_DEFAULT_SOURCE', language: 'c')
 
 shaders = [
   ['rounded_rect.vert', 'vert'],

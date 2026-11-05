@@ -13,122 +13,126 @@
 
 const TSLanguage *tree_sitter_c(void);
 
-/* Comprehensive C Tree-sitter query matching Neovim / NvChad captures */
-static const char *C_HIGHLIGHT_QUERY =
-    /* Control flow and statement keywords */
-    "\"break\" @keyword\n"
-    "\"case\" @keyword\n"
-    "\"continue\" @keyword\n"
-    "\"default\" @keyword\n"
-    "\"do\" @keyword\n"
-    "\"else\" @keyword\n"
-    "\"for\" @keyword\n"
-    "\"goto\" @keyword\n"
-    "\"if\" @keyword\n"
-    "\"return\" @keyword\n"
-    "\"switch\" @keyword\n"
-    "\"while\" @keyword\n"
-    "\"sizeof\" @keyword\n"
+/* Comprehensive C Tree-sitter query rules matching Neovim / NvChad captures.
+ * Each rule is verified against the runtime language grammar before being included,
+ * ensuring highlighting never breaks if a grammar version omits a specific node or token.
+ */
+static const char *QUERY_RULES[] = {
+    /* Statement & control flow keywords */
+    "\"break\" @keyword\n",
+    "\"case\" @keyword\n",
+    "\"continue\" @keyword\n",
+    "\"default\" @keyword\n",
+    "\"do\" @keyword\n",
+    "\"else\" @keyword\n",
+    "\"for\" @keyword\n",
+    "\"goto\" @keyword\n",
+    "\"if\" @keyword\n",
+    "\"return\" @keyword\n",
+    "\"switch\" @keyword\n",
+    "\"while\" @keyword\n",
+    "\"sizeof\" @keyword\n",
+
     /* Storage and type modifier keywords */
-    "\"const\" @keyword\n"
-    "\"static\" @keyword\n"
-    "\"extern\" @keyword\n"
-    "\"inline\" @keyword\n"
-    "\"volatile\" @keyword\n"
-    "\"register\" @keyword\n"
-    "\"auto\" @keyword\n"
-    "\"restrict\" @keyword\n"
-    "\"struct\" @keyword\n"
-    "\"union\" @keyword\n"
-    "\"enum\" @keyword\n"
-    "\"typedef\" @keyword\n"
+    "\"const\" @keyword\n",
+    "\"static\" @keyword\n",
+    "\"extern\" @keyword\n",
+    "\"inline\" @keyword\n",
+    "\"volatile\" @keyword\n",
+    "\"register\" @keyword\n",
+    "\"auto\" @keyword\n",
+    "\"restrict\" @keyword\n",
+    "\"struct\" @keyword\n",
+    "\"union\" @keyword\n",
+    "\"enum\" @keyword\n",
+    "\"typedef\" @keyword\n",
+
     /* Types */
-    "(primitive_type) @type\n"
-    "(type_identifier) @type\n"
-    "(sized_type_specifier) @type\n"
+    "(primitive_type) @type\n",
+    "(type_identifier) @type\n",
+    "(sized_type_specifier) @type\n",
+
     /* Literals */
-    "(string_literal) @string\n"
-    "(system_lib_string) @string\n"
-    "(char_literal) @string\n"
-    "(number_literal) @number\n"
-    "(comment) @comment\n"
-    /* Preprocessor directives - specific directives mapped to preproc (red) */
-    "\"#include\" @preproc\n"
-    "\"#define\" @preproc\n"
-    "\"#ifdef\" @preproc\n"
-    "\"#ifndef\" @preproc\n"
-    "\"#if\" @preproc\n"
-    "\"#else\" @preproc\n"
-    "\"#elif\" @preproc\n"
-    "\"#endif\" @preproc\n"
-    "\"#undef\" @preproc\n"
-    "\"#pragma\" @preproc\n"
-    "\"#error\" @preproc\n"
-    "\"#warning\" @preproc\n"
-    "(preproc_directive) @preproc\n"
-    /* Macro names and enum constants */
-    "(preproc_def name: (identifier) @constant)\n"
-    "(preproc_function_def name: (identifier) @function)\n"
-    "(enumerator name: (identifier) @constant)\n"
-    /* Function calls and declarators */
-    "(call_expression function: (identifier) @function)\n"
-    "(call_expression function: (field_expression field: (field_identifier) @function))\n"
-    "(function_declarator declarator: (identifier) @function)\n"
-    "(function_declarator declarator: (pointer_declarator declarator: (identifier) @function))\n"
-    /* Struct / union fields */
-    "(field_identifier) @property\n"
-    /* Built-in constants (NULL, true, false, nullptr) */
-    "((identifier) @constant_builtin)\n"
+    "(string_literal) @string\n",
+    "(system_lib_string) @string\n",
+    "(char_literal) @string\n",
+    "(number_literal) @number\n",
+    "(comment) @comment\n",
+
+    /* Preprocessor directives & macros */
+    "(preproc_directive) @preproc\n",
+    "(preproc_arg) @preproc\n",
+    "(preproc_def name: (identifier) @constant)\n",
+    "(preproc_function_def name: (identifier) @function)\n",
+    "(preproc_call directive: (preproc_directive) @preproc)\n",
+
+    /* Functions & Calls */
+    "(call_expression function: (identifier) @function)\n",
+    "(call_expression function: (field_expression field: (field_identifier) @function))\n",
+    "(function_declarator declarator: (identifier) @function)\n",
+    "(function_declarator declarator: (pointer_declarator declarator: (identifier) @function))\n",
+    "(function_declarator declarator: (pointer_declarator (identifier) @function))\n",
+
+    /* Struct / Union fields */
+    "(field_identifier) @property\n",
+
+    /* Enum constants */
+    "(enumerator name: (identifier) @constant)\n",
+
+    /* Builtin constants (NULL, true, false, nullptr filtered via is_constant_builtin) */
+    "(identifier) @constant_builtin\n",
+
     /* Operators */
-    "\"++\" @operator\n"
-    "\"--\" @operator\n"
-    "\"==\" @operator\n"
-    "\"!=\" @operator\n"
-    "\"<=\" @operator\n"
-    "\">=\" @operator\n"
-    "\"&&\" @operator\n"
-    "\"||\" @operator\n"
-    "\"<<\" @operator\n"
-    "\">>\" @operator\n"
-    "\"+=\" @operator\n"
-    "\"-=\" @operator\n"
-    "\"*=\" @operator\n"
-    "\"/=\" @operator\n"
-    "\"%=\" @operator\n"
-    "\"&=\" @operator\n"
-    "\"|=\" @operator\n"
-    "\"^=\" @operator\n"
-    "\"->\" @operator\n"
-    "\"+\" @operator\n"
-    "\"-\" @operator\n"
-    "\"*\" @operator\n"
-    "\"/\" @operator\n"
-    "\"%\" @operator\n"
-    "\"=\" @operator\n"
-    "\"<\" @operator\n"
-    "\">\" @operator\n"
-    "\"!\" @operator\n"
-    "\"&\" @operator\n"
-    "\"|\" @operator\n"
-    "\"^\" @operator\n"
-    "\"~\" @operator\n"
-    "\"?\" @operator\n"
-    "\":\" @operator\n"
-    "\".\" @operator\n"
-    ;
+    "\"->\" @operator\n",
+    "\"++\" @operator\n",
+    "\"--\" @operator\n",
+    "\"==\" @operator\n",
+    "\"!=\" @operator\n",
+    "\"<=\" @operator\n",
+    "\">=\" @operator\n",
+    "\"&&\" @operator\n",
+    "\"||\" @operator\n",
+    "\"<<\" @operator\n",
+    "\">>\" @operator\n",
+    "\"+=\" @operator\n",
+    "\"-=\" @operator\n",
+    "\"*=\" @operator\n",
+    "\"/=\" @operator\n",
+    "\"%=\" @operator\n",
+    "\"&=\" @operator\n",
+    "\"|=\" @operator\n",
+    "\"^=\" @operator\n",
+    "\"+\" @operator\n",
+    "\"-\" @operator\n",
+    "\"*\" @operator\n",
+    "\"/\" @operator\n",
+    "\"%\" @operator\n",
+    "\"=\" @operator\n",
+    "\"<\" @operator\n",
+    "\">\" @operator\n",
+    "\"!\" @operator\n",
+    "\"&\" @operator\n",
+    "\"|\" @operator\n",
+    "\"^\" @operator\n",
+    "\"~\" @operator\n",
+    "\"?\" @operator\n",
+    "\":\" @operator\n",
+    "\".\" @operator\n",
+    NULL
+};
 
 static HlKind capture_to_kind(const char *name, uint32_t len)
 {
-    if (len == 7 && !strncmp(name, "keyword", 7)) return HL_KEYWORD;
-    if (len == 4 && !strncmp(name, "type", 4)) return HL_TYPE;
-    if (len == 8 && !strncmp(name, "function", 8)) return HL_FUNCTION;
-    if (len == 6 && !strncmp(name, "string", 6)) return HL_STRING;
-    if (len == 6 && !strncmp(name, "number", 6)) return HL_NUMBER;
-    if (len == 7 && !strncmp(name, "comment", 7)) return HL_COMMENT;
-    if (len == 7 && !strncmp(name, "preproc", 7)) return HL_PREPROC;
-    if (len == 8 && !strncmp(name, "operator", 8)) return HL_OPERATOR;
-    if (len == 8 && !strncmp(name, "constant", 8)) return HL_CONSTANT;
-    if (len == 8 && !strncmp(name, "property", 8)) return HL_PROPERTY;
+    if (len >= 7 && !strncmp(name, "keyword", 7)) return HL_KEYWORD;
+    if (len >= 4 && !strncmp(name, "type", 4)) return HL_TYPE;
+    if (len >= 8 && !strncmp(name, "function", 8)) return HL_FUNCTION;
+    if (len >= 6 && !strncmp(name, "string", 6)) return HL_STRING;
+    if (len >= 6 && !strncmp(name, "number", 6)) return HL_NUMBER;
+    if (len >= 7 && !strncmp(name, "comment", 7)) return HL_COMMENT;
+    if (len >= 7 && !strncmp(name, "preproc", 7)) return HL_PREPROC;
+    if (len >= 8 && !strncmp(name, "operator", 8)) return HL_OPERATOR;
+    if (len >= 8 && !strncmp(name, "constant", 8)) return HL_CONSTANT;
+    if (len >= 8 && !strncmp(name, "property", 8)) return HL_PROPERTY;
     return HL_DEFAULT;
 }
 
@@ -146,10 +150,46 @@ bool highlight_init(Highlighter *hl)
         return false;
     }
 
+    /* Dynamically build combined query from rules supported by runtime grammar */
+    size_t cap = 8192;
+    char *query_buf = malloc(cap);
+    if (!query_buf) {
+        ts_parser_delete(parser);
+        return false;
+    }
+    query_buf[0] = '\0';
+    size_t query_len = 0;
+    int rules_accepted = 0;
+
+    for (size_t i = 0; QUERY_RULES[i] != NULL; ++i) {
+        const char *rule = QUERY_RULES[i];
+        uint32_t err_offset = 0;
+        TSQueryError err = TSQueryErrorNone;
+        TSQuery *test_q = ts_query_new(lang, rule, (uint32_t)strlen(rule), &err_offset, &err);
+        if (test_q) {
+            ts_query_delete(test_q);
+            size_t rlen = strlen(rule);
+            if (query_len + rlen + 1 >= cap) {
+                cap *= 2;
+                char *nb = realloc(query_buf, cap);
+                if (!nb) break;
+                query_buf = nb;
+            }
+            memcpy(query_buf + query_len, rule, rlen);
+            query_len += rlen;
+            query_buf[query_len] = '\0';
+            rules_accepted++;
+        }
+    }
+
     uint32_t err_offset = 0;
     TSQueryError err = TSQueryErrorNone;
-    TSQuery *query = ts_query_new(lang, C_HIGHLIGHT_QUERY, (uint32_t)strlen(C_HIGHLIGHT_QUERY),
-                                  &err_offset, &err);
+    TSQuery *query = NULL;
+    if (query_len > 0) {
+        query = ts_query_new(lang, query_buf, (uint32_t)query_len, &err_offset, &err);
+    }
+    free(query_buf);
+
     if (!query) {
         fprintf(stderr, "highlight: query error %d at %u\n", (int)err, err_offset);
         ts_parser_delete(parser);
@@ -161,7 +201,7 @@ bool highlight_init(Highlighter *hl)
     hl->query = query;
     hl->need_full = true;
     hl->ready = true;
-    printf("Tree-sitter C highlighter ready\n");
+    printf("Tree-sitter C highlighter ready (%d rules active)\n", rules_accepted);
     return true;
 }
 

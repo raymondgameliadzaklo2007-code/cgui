@@ -273,33 +273,25 @@ static Icon *project_file_icon(App *app, const ProjectEntry *entry,
                                uint8_t tint[4])
 {
     const Theme *th = theme_current();
-    tint[3] = 255;
+    /* Monochrome icons matching Zed's default: unified subtle tone across all file types */
+    memcpy(tint, th->sidebar_muted, 4);
     if (entry->directory) {
-        if (th->syntax[HL_TYPE][3] > 0) {
-            memcpy(tint, th->syntax[HL_TYPE], 4);
-        } else {
-            tint[0] = 229; tint[1] = 192; tint[2] = 123;
-        }
         return entry->expanded ? &app->project_folder_open_icon
                                : &app->project_folder_icon;
     } else {
         const char *ext = strrchr(entry->name, '.');
         if (ext && (strcmp(ext, ".c") == 0 || strcmp(ext, ".C") == 0 ||
                     strcmp(ext, ".h") == 0 || strcmp(ext, ".H") == 0)) {
-            memcpy(tint, th->syntax[HL_FUNCTION], 4);
             return &app->project_file_code_icon;
         } else if (ext && (strcmp(ext, ".json") == 0 ||
                            strcmp(ext, ".vert") == 0 ||
                            strcmp(ext, ".frag") == 0 ||
                            strcmp(ext, ".lua") == 0 ||
                            strcmp(ext, ".scm") == 0)) {
-            memcpy(tint, th->syntax[HL_OPERATOR], 4);
             return &app->project_file_generic_code_icon;
         } else if (ext && (strcmp(ext, ".md") == 0 || strcmp(ext, ".txt") == 0)) {
-            memcpy(tint, th->sidebar_muted, 4);
             return &app->project_file_book_icon;
         } else {
-            memcpy(tint, th->sidebar_text, 4);
             return &app->project_file_text_icon;
         }
     }
@@ -401,23 +393,18 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
     if (app->project_icons_ok) {
         Icon *chevron = app->project_root_expanded ? &app->project_chevron_down_icon
                                                   : &app->project_chevron_right_icon;
-        uint8_t folder_tint[4];
-        if (th->syntax[HL_TYPE][3] > 0) {
-            memcpy(folder_tint, th->syntax[HL_TYPE], 4);
-        } else {
-            folder_tint[0] = 229; folder_tint[1] = 192; folder_tint[2] = 123; folder_tint[3] = 255;
-        }
+        const uint8_t *root_tint = root_hovered ? text : muted;
         icon_draw(&app->icons, chevron, ctx, 10.0f,
                   (float)(int)(root_y + (row_h - 14.0f) * 0.5f),
-                  14.0f, 14.0f, muted);
+                  14.0f, 14.0f, root_tint);
         icon_draw(&app->icons, &app->project_folder_open_icon, ctx, 27.0f,
                   (float)(int)(root_y + (row_h - 16.0f) * 0.5f),
-                  16.0f, 16.0f, folder_tint);
+                  16.0f, 16.0f, root_tint);
     } else {
+        const uint8_t *root_tint = root_hovered ? text : muted;
         font_draw(&app->font, ctx, 12.0f, root_baseline,
-                  app->project_root_expanded ? "v" : ">", muted);
-        uint8_t root_icon[4] = { 196, 148, 68, 255 };
-        font_draw(&app->font, ctx, 27.0f, root_baseline, "D", root_icon);
+                  app->project_root_expanded ? "v" : ">", root_tint);
+        font_draw(&app->font, ctx, 27.0f, root_baseline, "D", root_tint);
     }
     char root_label[256];
     project_fit_name(app, app->project_name[0] ? app->project_name : "No project open",
@@ -501,6 +488,11 @@ void draw_project_sidebar(App *app, VkContext *ctx, float window_h,
         float icon_x = indent + 14.0f;
         uint8_t glyph_color[4];
         Icon *glyph = project_file_icon(app, entry, glyph_color);
+        if (is_active) {
+            memcpy(glyph_color, active_text, 4);
+        } else if (row_hovered) {
+            memcpy(glyph_color, text, 4);
+        }
         if (app->project_icons_ok) {
             icon_draw(&app->icons, glyph, ctx, icon_x, glyph_y,
                       16.0f, 16.0f, glyph_color);

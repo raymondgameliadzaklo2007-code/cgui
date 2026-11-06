@@ -1,6 +1,6 @@
 {
   "name": "cgui – Code Editor",
-  "description": "Fast, lightweight code editor written in C using SDL3, Vulkan, and tree-sitter.",
+  "description": "Fast, modern code editor and GPUI framework written in C++23 using Vulkan, GLFW, and Yoga Layout.",
   "requestFramePermissions": [],
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

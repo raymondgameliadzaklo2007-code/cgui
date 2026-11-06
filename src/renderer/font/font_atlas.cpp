@@ -115,17 +115,16 @@ void FontAtlas::generate_default_atlas() {
         }
         glyph.advance = adv;
 
-        // Plane bounds in em space
-        glyph.plane_left = 0.05f;
-        glyph.plane_bottom = descender_;
-        glyph.plane_right = adv - 0.05f;
-        glyph.plane_top = ascender_;
+        // Plane bounds in em space: left, bottom, right, top
+        glyph.plane_bounds = glm::vec4(0.05f, descender_, adv - 0.05f, ascender_);
 
-        // UV coordinates in atlas [0, 1]
-        glyph.uv_left = (origin_x + 2.0f) / width_;
-        glyph.uv_top = (origin_y + 2.0f) / height_;
-        glyph.uv_right = (origin_x + cell_w - 2.0f) / width_;
-        glyph.uv_bottom = (origin_y + cell_h - 2.0f) / height_;
+        // UV coordinates in atlas [0, 1]: u0, v0, u1, v1
+        glyph.uv_bounds = glm::vec4(
+            (origin_x + 2.0f) / static_cast<float>(width_),
+            (origin_y + 2.0f) / static_cast<float>(height_),
+            (origin_x + cell_w - 2.0f) / static_cast<float>(width_),
+            (origin_y + cell_h - 2.0f) / static_cast<float>(height_)
+        );
 
         glyphs_[glyph.codepoint] = glyph;
 

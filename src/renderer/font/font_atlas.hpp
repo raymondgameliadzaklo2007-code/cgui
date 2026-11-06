@@ -15,6 +15,16 @@ struct Glyph {
     float advance{0.0f};          // Advance width in em units (multiply by font_size)
     glm::vec4 plane_bounds{0.0f}; // left, bottom, right, top relative to baseline in em
     glm::vec4 uv_bounds{0.0f};    // u0, v0, u1, v1 in atlas texture [0, 1]
+
+    [[nodiscard]] float plane_left() const noexcept { return plane_bounds.x; }
+    [[nodiscard]] float plane_bottom() const noexcept { return plane_bounds.y; }
+    [[nodiscard]] float plane_right() const noexcept { return plane_bounds.z; }
+    [[nodiscard]] float plane_top() const noexcept { return plane_bounds.w; }
+
+    [[nodiscard]] float uv_left() const noexcept { return uv_bounds.x; }
+    [[nodiscard]] float uv_top() const noexcept { return uv_bounds.y; }
+    [[nodiscard]] float uv_right() const noexcept { return uv_bounds.z; }
+    [[nodiscard]] float uv_bottom() const noexcept { return uv_bounds.w; }
 };
 
 class FontAtlas {

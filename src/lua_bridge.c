@@ -196,6 +196,10 @@ static void apply_table_overrides(lua_State *L, int hl_idx, int t_b30, int t_b16
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@character", th->syntax[HL_STRING]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "String", th->syntax[HL_STRING]);
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Character", th->syntax[HL_STRING]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@string.escape", th->syntax[HL_ESCAPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@character.special", th->syntax[HL_ESCAPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "SpecialChar", th->syntax[HL_ESCAPE]);
+    apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "Special", th->syntax[HL_ESCAPE]);
 
     /* Numbers & Constants */
     apply_hl_override_entry(L, hl_idx, t_b30, t_b16, "@number", th->syntax[HL_NUMBER]);
@@ -388,6 +392,7 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
     memcpy(th->syntax[HL_CONSTANT], orange, 4);
     memcpy(th->syntax[HL_PROPERTY],    red, 4);
     memcpy(th->syntax[HL_PUNCTUATION], white, 4);
+    memcpy(th->syntax[HL_ESCAPE],      teal, 4);
 
     /* If base_16 is provided, use standard Neovim / Tree-sitter palette */
     int t_b16 = 0;
@@ -432,6 +437,7 @@ bool lua_bridge_parse_base30(lua_State *L, int index, Theme *th)
         }
         if (get_table_hex(L, t_b16, "base0C", c)) {
             memcpy(th->syntax[HL_OPERATOR], c, 4);
+            memcpy(th->syntax[HL_ESCAPE], c, 4); /* NvChad @string.escape is base0C */
         }
         if (get_table_hex(L, t_b16, "base0D", c)) {
             memcpy(th->syntax[HL_FUNCTION], c, 4);

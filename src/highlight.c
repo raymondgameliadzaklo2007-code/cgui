@@ -56,6 +56,7 @@ static const char *QUERY_RULES[] = {
     "(string_literal) @string\n",
     "(system_lib_string) @string\n",
     "(char_literal) @string\n",
+    "(escape_sequence) @string.escape\n",
     "(number_literal) @number\n",
     "(comment) @comment\n",
 
@@ -158,6 +159,10 @@ static HlKind capture_to_kind(const char *name, uint32_t len)
     if (len >= 7 && !strncmp(name, "keyword", 7)) return HL_KEYWORD;
     if (len >= 4 && !strncmp(name, "type", 4)) return HL_TYPE;
     if (len >= 8 && !strncmp(name, "function", 8)) return HL_FUNCTION;
+    if (len >= 13 && !strncmp(name, "string.escape", 13)) return HL_ESCAPE;
+    if (len >= 25 && !strncmp(name, "constant.character.escape", 25)) return HL_ESCAPE;
+    if (len >= 17 && !strncmp(name, "character.special", 17)) return HL_ESCAPE;
+    if (len >= 6 && !strncmp(name, "escape", 6)) return HL_ESCAPE;
     if (len >= 6 && !strncmp(name, "string", 6)) return HL_STRING;
     if (len >= 16 && !strncmp(name, "constant.numeric", 16)) return HL_NUMBER;
     if (len >= 6 && !strncmp(name, "number", 6)) return HL_NUMBER;
@@ -403,17 +408,6 @@ static char byte_at(HlReadFn read, void *payload, size_t i)
     return (p && n) ? p[0] : '\0';
 }
 
-static int span_cmp(const void *a, const void *b)
-{
-    const HlSpan *sa = a, *sb = b;
-    if (sa->start < sb->start) return -1;
-    if (sa->start > sb->start) return 1;
-    if (sa->end > sb->end) return -1;
-    if (sa->end < sb->end) return 1;
-    /* Deterministic tie-break so full and incremental rebuilds agree. */
-    return (int)sa->kind - (int)sb->kind;
-}
-
 static bool span_push(HlSpan **arr, size_t *count, size_t *cap, HlSpan s)
 {
     if (*count >= *cap) {
@@ -531,22 +525,190 @@ static void collect(Highlighter *hl, TSTree *tree, bool full, size_t lo, size_t 
     scan_preprocs(ts_tree_root_node(tree), lo, hi, full, read, payload, out, count, cap);
 }
 
-/* Make spans non-overlapping. Input sorted by (start asc, end desc), so an
- * enclosing (longer) span comes first and wins, matching the old lookup. */
+typedef struct RawSpan {
+    size_t start;
+    size_t end;
+    HlKind kind;
+    size_t seq;
+} RawSpan;
+
+static int size_t_cmp(const void *a, const void *b)
+{
+    size_t va = *(const size_t *)a;
+    size_t vb = *(const size_t *)b;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+    return 0;
+}
+
+static int raw_span_cmp(const void *a, const void *b)
+{
+    const RawSpan *sa = a, *sb = b;
+    if (sa->start < sb->start) return -1;
+    if (sa->start > sb->start) return 1;
+    if (sa->end > sb->end) return -1;
+    if (sa->end < sb->end) return 1;
+    return (sa->seq < sb->seq) ? -1 : 1;
+}
+
+static bool span_wins(const RawSpan *cand, const RawSpan *curr)
+{
+    size_t len_cand = cand->end - cand->start;
+    size_t len_curr = curr->end - curr->start;
+    if (len_cand < len_curr) return true;
+    if (len_cand > len_curr) return false;
+
+    /* If equal length, prioritize specific token kinds */
+    if (cand->kind == HL_ESCAPE && curr->kind != HL_ESCAPE) return true;
+    if (curr->kind == HL_ESCAPE && cand->kind != HL_ESCAPE) return false;
+
+    if (cand->kind == HL_PUNCTUATION && curr->kind != HL_PUNCTUATION) return true;
+    if (curr->kind == HL_PUNCTUATION && cand->kind != HL_PUNCTUATION) return false;
+
+    if (cand->kind == HL_INCLUDE && curr->kind != HL_INCLUDE) return true;
+    if (curr->kind == HL_INCLUDE && cand->kind != HL_INCLUDE) return false;
+
+    /* If still tied, later matched sequence wins */
+    return cand->seq > curr->seq;
+}
+
+/* Flatten spans using interval coordinate sweep.
+ * Inner/nested child spans (e.g. escape sequences like \n, \t inside string literals,
+ * punctuation/brackets, include directives) cleanly take precedence over their enclosing
+ * parent spans and segment them. Contiguous spans of the same kind are automatically merged.
+ */
 static void flatten(Highlighter *hl)
 {
-    size_t w = 0;
-    size_t last_end = 0;
-    for (size_t i = 0; i < hl->span_count; ++i) {
-        HlSpan s = hl->spans[i];
-        if (w > 0 && s.start < last_end) {
-            if (s.end <= last_end) continue;
-            s.start = last_end;
-        }
-        hl->spans[w++] = s;
-        last_end = s.end;
+    if (!hl || hl->span_count == 0) return;
+
+    size_t n = hl->span_count;
+
+    /* 1. Collect all boundary coordinates */
+    size_t *coords = malloc(2 * n * sizeof(size_t));
+    if (!coords) return;
+
+    for (size_t i = 0; i < n; ++i) {
+        coords[2 * i]     = hl->spans[i].start;
+        coords[2 * i + 1] = hl->spans[i].end;
     }
-    hl->span_count = w;
+
+    qsort(coords, 2 * n, sizeof(size_t), size_t_cmp);
+
+    size_t num_coords = 0;
+    for (size_t i = 0; i < 2 * n; ++i) {
+        if (i == 0 || coords[i] != coords[num_coords - 1]) {
+            coords[num_coords++] = coords[i];
+        }
+    }
+
+    if (num_coords < 2) {
+        free(coords);
+        return;
+    }
+
+    /* 2. Prepare raw spans with sequence numbers and sort by start asc */
+    RawSpan *sorted = malloc(n * sizeof(RawSpan));
+    if (!sorted) {
+        free(coords);
+        return;
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        sorted[i].start = hl->spans[i].start;
+        sorted[i].end   = hl->spans[i].end;
+        sorted[i].kind  = hl->spans[i].kind;
+        sorted[i].seq   = i;
+    }
+    qsort(sorted, n, sizeof(RawSpan), raw_span_cmp);
+
+    /* 3. Output spans buffer */
+    size_t out_cap = n * 2 + 16;
+    HlSpan *out = malloc(out_cap * sizeof(HlSpan));
+    if (!out) {
+        free(coords);
+        free(sorted);
+        return;
+    }
+    size_t out_count = 0;
+
+    /* 4. Active list */
+    size_t active_cap = 64;
+    RawSpan *active = malloc(active_cap * sizeof(RawSpan));
+    if (!active) {
+        free(coords);
+        free(sorted);
+        free(out);
+        return;
+    }
+    size_t active_count = 0;
+    size_t next_idx = 0;
+
+    /* 5. Sweep through each elementary interval [coords[c], coords[c+1]) */
+    for (size_t c = 0; c + 1 < num_coords; ++c) {
+        size_t seg_start = coords[c];
+        size_t seg_end   = coords[c + 1];
+        if (seg_end <= seg_start) continue;
+
+        /* Remove expired spans */
+        size_t act_w = 0;
+        for (size_t i = 0; i < active_count; ++i) {
+            if (active[i].end > seg_start) {
+                active[act_w++] = active[i];
+            }
+        }
+        active_count = act_w;
+
+        /* Add spans starting at or before seg_start */
+        while (next_idx < n && sorted[next_idx].start <= seg_start) {
+            if (sorted[next_idx].end > seg_start) {
+                if (active_count >= active_cap) {
+                    active_cap *= 2;
+                    RawSpan *na = realloc(active, active_cap * sizeof(RawSpan));
+                    if (!na) break;
+                    active = na;
+                }
+                active[active_count++] = sorted[next_idx];
+            }
+            next_idx++;
+        }
+
+        /* Determine best span covering [seg_start, seg_end) */
+        if (active_count > 0) {
+            size_t best_i = 0;
+            for (size_t i = 1; i < active_count; ++i) {
+                if (span_wins(&active[i], &active[best_i])) {
+                    best_i = i;
+                }
+            }
+            HlKind win_kind = active[best_i].kind;
+
+            /* Merge with previous span if contiguous and same kind */
+            if (out_count > 0 && out[out_count - 1].end == seg_start && out[out_count - 1].kind == win_kind) {
+                out[out_count - 1].end = seg_end;
+            } else {
+                if (out_count >= out_cap) {
+                    out_cap *= 2;
+                    HlSpan *no = realloc(out, out_cap * sizeof(HlSpan));
+                    if (!no) break;
+                    out = no;
+                }
+                out[out_count++] = (HlSpan){
+                    .start = seg_start,
+                    .end   = seg_end,
+                    .kind  = win_kind
+                };
+            }
+        }
+    }
+
+    free(coords);
+    free(sorted);
+    free(active);
+
+    free(hl->spans);
+    hl->spans = out;
+    hl->span_count = out_count;
+    hl->span_cap = out_cap;
 }
 
 bool highlight_update_input(Highlighter *hl, HlReadFn read, void *payload, size_t len)
@@ -588,8 +750,6 @@ bool highlight_update_input(Highlighter *hl, HlReadFn read, void *payload, size_
     if (full) {
         hl->span_count = 0;
         collect(hl, tree, true, 0, len, read, payload, &hl->spans, &hl->span_count, &hl->span_cap);
-        if (hl->span_count > 1)
-            qsort(hl->spans, hl->span_count, sizeof(HlSpan), span_cmp);
         flatten(hl);
     } else if (hl->has_dirty) {
         if (hi > len) hi = len;
@@ -604,22 +764,19 @@ bool highlight_update_input(Highlighter *hl, HlReadFn read, void *payload, size_
         HlSpan *fresh = NULL;
         size_t fcount = 0, fcap = 0;
         collect(hl, tree, false, lo, hi, read, payload, &fresh, &fcount, &fcap);
-        if (fcount > 1) qsort(fresh, fcount, sizeof(HlSpan), span_cmp);
 
         /* Merge: keep old spans outside [lo, hi), add fresh ones. */
         size_t total = hl->span_count + fcount;
         HlSpan *merged = malloc((total ? total : 1) * sizeof(HlSpan));
         if (merged) {
-            size_t m = 0, i = 0, j = 0;
-            while (i < hl->span_count || j < fcount) {
-                if (i < hl->span_count) {
-                    HlSpan *s = &hl->spans[i];
-                    if (s->start < hi && s->end > lo) { i++; continue; }
-                    if (j >= fcount || span_cmp(s, &fresh[j]) <= 0) {
-                        merged[m++] = *s; i++; continue;
-                    }
-                }
-                merged[m++] = fresh[j++];
+            size_t m = 0;
+            for (size_t i = 0; i < hl->span_count; ++i) {
+                HlSpan *s = &hl->spans[i];
+                if (s->start < hi && s->end > lo) continue;
+                merged[m++] = *s;
+            }
+            for (size_t j = 0; j < fcount; ++j) {
+                merged[m++] = fresh[j];
             }
             free(hl->spans);
             hl->spans = merged;

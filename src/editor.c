@@ -1860,7 +1860,7 @@ bool editor_find_matching_bracket(const Editor *ed, size_t pos, size_t *out_matc
     if (forward) {
         for (size_t i = pos; i < len; ++i) {
             HlKind k = highlight_kind_at(&ed->hl, i);
-            if (k == HL_STRING || k == HL_COMMENT) continue;
+            if (k == HL_STRING || k == HL_ESCAPE || k == HL_COMMENT) continue;
             char c = char_at(ed, i);
             if (c == open_ch) depth++;
             else if (c == close_ch) {
@@ -1874,7 +1874,7 @@ bool editor_find_matching_bracket(const Editor *ed, size_t pos, size_t *out_matc
     } else {
         for (size_t i = pos + 1; i-- > 0; ) {
             HlKind k = highlight_kind_at(&ed->hl, i);
-            if (k == HL_STRING || k == HL_COMMENT) {
+            if (k == HL_STRING || k == HL_ESCAPE || k == HL_COMMENT) {
                 if (i == 0) break;
                 continue;
             }

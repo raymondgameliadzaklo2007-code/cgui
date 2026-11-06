@@ -130,6 +130,7 @@
 (string_literal) @string
 (system_lib_string) @string
 (char_literal) @string
+(escape_sequence) @string.escape
 (number_literal) @constant.numeric
 [(true) (false)] @constant.builtin
 (null) @constant.builtin

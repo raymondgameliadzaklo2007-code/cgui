@@ -75,6 +75,7 @@ void theme_set_builtin_onedark(Theme *th)
     set_color(th->syntax[HL_CONSTANT],    209, 154, 102, 255); /* #d19a66 orange */
     set_color(th->syntax[HL_PROPERTY],    224, 108, 117, 255); /* #e06c75 red */
     set_color(th->syntax[HL_PUNCTUATION], 190, 80,  70,  255); /* #be5046 rust / base0F (NvChad Delimiter / brackets) */
+    set_color(th->syntax[HL_ESCAPE],      86,  182, 194, 255); /* #56b6c2 teal / base0C (NvChad @string.escape) */
 
     /* Tab bar */
     set_color(th->tab_strip_bg,    30, 34, 42, 255);   /* #1e222a darker_black */
@@ -136,6 +137,7 @@ void theme_set_builtin_light(Theme *th)
     set_color(th->syntax[HL_CONSTANT],    28,  0,   207, 255);
     set_color(th->syntax[HL_PROPERTY],    50,  120, 100, 255);
     set_color(th->syntax[HL_PUNCTUATION], 120, 80,  70,  255);
+    set_color(th->syntax[HL_ESCAPE],      0,   128, 128, 255);
 
     /* Chrome */
     set_color(th->tab_strip_bg,    232, 232, 232, 255);

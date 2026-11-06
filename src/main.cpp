@@ -29,7 +29,7 @@ int main() {
 
         // 3. Construct GPUI-style Declarative Layout Tree using Yoga
         auto root = cgui::ui::col();
-        root->width(1280.0f).height(800.0f).bg(cgui::ui::Color::hex(0x181A1F));
+        root->width_percent(100.0f).height_percent(100.0f).bg(cgui::ui::Color::hex(0x181A1F));
 
         // Header / Main Toolbar
         auto toolbar = cgui::ui::row();

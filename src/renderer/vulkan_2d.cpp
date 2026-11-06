@@ -217,7 +217,10 @@ void Vulkan2DRenderer::collect_instances(const std::shared_ptr<ui::Element>& el,
         QuadInstanceData inst{};
         inst.rect = glm::vec4(abs_x, abs_y, bounds.width, bounds.height);
 
-        if (style.background.has_value()) {
+        if (el->is_hovered() && style.hover_background.has_value()) {
+            const auto& hbg = style.hover_background.value();
+            inst.color = glm::vec4(hbg.r, hbg.g, hbg.b, hbg.a);
+        } else if (style.background.has_value()) {
             const auto& bg = style.background.value();
             inst.color = glm::vec4(bg.r, bg.g, bg.b, bg.a);
         } else {

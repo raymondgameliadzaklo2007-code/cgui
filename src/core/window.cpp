@@ -22,6 +22,8 @@ Window::Window(const WindowConfig& config) {
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebuffer_size_callback);
+    glfwSetCursorPosCallback(window_, cursor_pos_callback);
+    glfwSetMouseButtonCallback(window_, mouse_button_callback);
 }
 
 Window::~Window() {
@@ -91,6 +93,20 @@ void Window::framebuffer_size_callback(GLFWwindow* window, int width, int height
     auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
     if (self && self->on_resize_) {
         self->on_resize_(width, height);
+    }
+}
+
+void Window::cursor_pos_callback(GLFWwindow* window, double xpos, double ypos) {
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self && self->on_mouse_move_) {
+        self->on_mouse_move_(xpos, ypos);
+    }
+}
+
+void Window::mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self && self->on_mouse_button_) {
+        self->on_mouse_button_(button, action, mods);
     }
 }
 

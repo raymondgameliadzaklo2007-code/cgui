@@ -31,10 +31,15 @@ struct Bounds {
     float y{0.0f};
     float width{0.0f};
     float height{0.0f};
+
+    [[nodiscard]] bool contains(float px, float py) const noexcept {
+        return px >= x && px <= (x + width) && py >= y && py <= (y + height);
+    }
 };
 
 struct Style {
     std::optional<Color> background;
+    std::optional<Color> hover_background;
     std::optional<Color> border_color;
     float border_width{0.0f};
     float corner_radius{0.0f};
@@ -60,8 +65,12 @@ public:
     // Fluent layout chaining
     Element& width(float px);
     Element& height(float px);
+    Element& width_percent(float percent = 100.0f);
+    Element& height_percent(float percent = 100.0f);
     Element& flex_grow(float grow = 1.0f);
     Element& flex_shrink(float shrink = 1.0f);
+    Element& flex_basis(float px);
+    Element& flex_basis_percent(float percent);
     Element& flex_direction(YGFlexDirection dir);
     Element& justify_content(YGJustify justify);
     Element& align_items(YGAlign align);
@@ -72,9 +81,28 @@ public:
 
     // Fluent styling
     Element& bg(const Color& color);
+    Element& hover_bg(const Color& color);
     Element& border(float width, const Color& color);
     Element& radius(float r);
     Element& text(std::string text, const Color& color = Color::rgb(220, 224, 230));
+
+    // Interactive event callbacks
+    using ClickCallback = std::function<void()>;
+    using HoverCallback = std::function<void(bool is_hovered)>;
+
+    Element& on_click(ClickCallback callback) { on_click_ = std::move(callback); return *this; }
+    Element& on_hover(HoverCallback callback) { on_hover_ = std::move(callback); return *this; }
+
+    [[nodiscard]] bool is_hovered() const noexcept { return is_hovered_; }
+    void set_hovered(bool hovered) {
+        if (is_hovered_ != hovered) {
+            is_hovered_ = hovered;
+            if (on_hover_) on_hover_(is_hovered_);
+        }
+    }
+    void trigger_click() {
+        if (on_click_) on_click_();
+    }
 
     // Hierarchy
     std::shared_ptr<Element> add_child(std::shared_ptr<Element> child);
@@ -90,6 +118,9 @@ private:
     YGNodeRef yoga_node_{nullptr};
     Style style_{};
     std::vector<std::shared_ptr<Element>> children_;
+    bool is_hovered_{false};
+    ClickCallback on_click_;
+    HoverCallback on_hover_;
 };
 
 // Fluent helper factories

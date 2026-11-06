@@ -23,8 +23,33 @@ Element& Element::height(float px) {
     return *this;
 }
 
+Element& Element::width_percent(float percent) {
+    YGNodeStyleSetWidthPercent(yoga_node_, percent);
+    return *this;
+}
+
+Element& Element::height_percent(float percent) {
+    YGNodeStyleSetHeightPercent(yoga_node_, percent);
+    return *this;
+}
+
 Element& Element::flex_grow(float grow) {
     YGNodeStyleSetFlexGrow(yoga_node_, grow);
+    return *this;
+}
+
+Element& Element::flex_shrink(float shrink) {
+    YGNodeStyleSetFlexShrink(yoga_node_, shrink);
+    return *this;
+}
+
+Element& Element::flex_basis(float px) {
+    YGNodeStyleSetFlexBasis(yoga_node_, px);
+    return *this;
+}
+
+Element& Element::flex_basis_percent(float percent) {
+    YGNodeStyleSetFlexBasisPercent(yoga_node_, percent);
     return *this;
 }
 
@@ -70,6 +95,11 @@ Element& Element::gap(float px) {
 
 Element& Element::bg(const Color& color) {
     style_.background = color;
+    return *this;
+}
+
+Element& Element::hover_bg(const Color& color) {
+    style_.hover_background = color;
     return *this;
 }
 

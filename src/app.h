@@ -25,6 +25,7 @@
 #include "terminal.h"
 #include "project.h"
 #include "welcome.h"
+#include "ui_layout.h"
 
 #define MAX_TABS 16
 #define PROJECT_PATH_MAX 1024
@@ -99,6 +100,21 @@ typedef struct App {
     Icon         icon_term_rerun;
     Icon         icon_term_close;
     bool         term_icons_ok;
+
+    /* JetBrains Toolbar & Stripe Lucide Icons */
+    Icon         icon_play;
+    Icon         icon_hammer;
+    Icon         icon_bug;
+    Icon         icon_search;
+    Icon         icon_settings;
+    Icon         icon_git_branch;
+    Icon         project_file_code_c_icon;
+    Icon         project_file_cog_icon;
+    Icon         project_file_icon;
+    bool         tool_icons_ok;
+
+    /* Clay Flexbox Layout Engine */
+    UiLayout     ui_layout;
 
     /* Cached text shader SPIR-V for font reloads */
     uint32_t *text_vert;

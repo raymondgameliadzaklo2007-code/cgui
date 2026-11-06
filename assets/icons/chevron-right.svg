@@ -1,4 +1,13 @@
-<!-- Adapted from Zed Industries' file_icons/chevron_right.svg (Apache-2.0). -->
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M6.64062 4.64062L9.89062 8.00125L6.64062 11.375" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m9 18 6-6-6-6" />
 </svg>

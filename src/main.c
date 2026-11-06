@@ -28,6 +28,197 @@
 #include "theme.h"
 #include "lua_bridge.h"
 #include "lsp.h"
+#include "ui_layout.h"
+#include "tool_icons.h"
+
+static void draw_main_toolbar(App *app, VkContext *ctx)
+{
+    UiLayout *ui = &app->ui_layout;
+    if (!ui->initialized) return;
+
+    const Theme *th = theme_current();
+    Clay_BoundingBox tb = ui->toolbar_bounds;
+
+    /* Toolbar background & bottom border */
+    vk_draw_rounded_rect(&app->draw, tb.x, tb.y, tb.width, tb.height, 0.0f, 1.0f, th->tab_strip_bg);
+    vk_draw_rounded_rect(&app->draw, tb.x, tb.y + tb.height - 1.0f, tb.width, 1.0f, 0.0f, 1.0f, th->tab_edge);
+
+    float mouse_x, mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+
+    /* Left: App Logo Badge + Project Title */
+    float brand_x = tb.x + 12.0f;
+    float brand_y = tb.y + (tb.height - 22.0f) * 0.5f;
+    vk_draw_rounded_rect(&app->draw, brand_x, brand_y, 44.0f, 22.0f, 4.0f, 1.0f, th->sidebar_selected);
+    font_draw(&app->font, ctx, brand_x + 8.0f, brand_y + (22.0f + app->font.ascent + app->font.descent) * 0.5f, "cgui", th->caret);
+
+    float proj_x = brand_x + 52.0f;
+    const char *proj_name = app->project_name[0] ? app->project_name : "cgui-editor";
+    font_draw(&app->font, ctx, proj_x, tb.y + (tb.height + app->font.ascent + app->font.descent) * 0.5f, proj_name, th->fg);
+
+    /* Center: JetBrains Run Widget */
+    Clay_BoundingBox rw = ui->run_dropdown_bounds;
+    if (rw.width > 0) {
+        bool rw_hov = ui_rect_contains(rw, mouse_x, mouse_y);
+        vk_draw_rounded_rect(&app->draw, rw.x, rw.y, rw.width, rw.height, 5.0f, 1.0f, rw_hov ? th->sidebar_hover : th->sidebar_bg);
+        vk_draw_rounded_rect(&app->draw, rw.x, rw.y, rw.width, rw.height, 5.0f, 1.0f, th->sidebar_edge);
+
+        char target_str[128];
+        if (app->project_cfg.target_count > 0) {
+            snprintf(target_str, sizeof(target_str), "%s ▼", app->project_cfg.targets[app->project_cfg.active_target].name);
+        } else {
+            snprintf(target_str, sizeof(target_str), "Meson: Build ▼");
+        }
+        font_draw(&app->font, ctx, rw.x + 8.0f, rw.y + (rw.height + app->font.ascent + app->font.descent) * 0.5f, target_str, th->fg);
+    }
+
+    /* Run Play Button */
+    Clay_BoundingBox rb = ui->run_btn_bounds;
+    if (rb.width > 0) {
+        bool rb_hov = ui_rect_contains(rb, mouse_x, mouse_y);
+        if (rb_hov) {
+            vk_draw_rounded_rect(&app->draw, rb.x, rb.y, rb.width, rb.height, 4.0f, 1.0f, th->sidebar_hover);
+        }
+        uint8_t green_c[4] = { 89, 168, 105, 255 };
+        if (app->tool_icons_ok && app->icon_play.ready) {
+            icon_draw(&app->icons, &app->icon_play, ctx, rb.x + 6.0f, rb.y + 6.0f, 16.0f, 16.0f, green_c);
+        }
+    }
+
+    /* Build Hammer Button */
+    Clay_BoundingBox bb = ui->build_btn_bounds;
+    if (bb.width > 0) {
+        bool bb_hov = ui_rect_contains(bb, mouse_x, mouse_y);
+        if (bb_hov) {
+            vk_draw_rounded_rect(&app->draw, bb.x, bb.y, bb.width, bb.height, 4.0f, 1.0f, th->sidebar_hover);
+        }
+        uint8_t blue_c[4] = { 97, 175, 239, 255 };
+        if (app->tool_icons_ok && app->icon_hammer.ready) {
+            icon_draw(&app->icons, &app->icon_hammer, ctx, bb.x + 6.0f, bb.y + 6.0f, 16.0f, 16.0f, blue_c);
+        }
+    }
+
+    /* Debug Bug Button */
+    Clay_BoundingBox db = ui->debug_btn_bounds;
+    if (db.width > 0) {
+        bool db_hov = ui_rect_contains(db, mouse_x, mouse_y);
+        if (db_hov) {
+            vk_draw_rounded_rect(&app->draw, db.x, db.y, db.width, db.height, 4.0f, 1.0f, th->sidebar_hover);
+        }
+        uint8_t amber_c[4] = { 229, 192, 123, 255 };
+        if (app->tool_icons_ok && app->icon_bug.ready) {
+            icon_draw(&app->icons, &app->icon_bug, ctx, db.x + 6.0f, db.y + 6.0f, 16.0f, 16.0f, amber_c);
+        }
+    }
+
+    /* Search Everywhere Button on Right */
+    Clay_BoundingBox sb = ui->search_btn_bounds;
+    if (sb.width > 0) {
+        bool sb_hov = ui_rect_contains(sb, mouse_x, mouse_y);
+        if (sb_hov) {
+            vk_draw_rounded_rect(&app->draw, sb.x, sb.y, sb.width, sb.height, 4.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_search.ready) {
+            icon_draw(&app->icons, &app->icon_search, ctx, sb.x + 6.0f, sb.y + 6.0f, 16.0f, 16.0f, th->gutter_fg);
+        }
+    }
+
+    /* Settings Button on Right */
+    Clay_BoundingBox gb = ui->settings_btn_bounds;
+    if (gb.width > 0) {
+        bool gb_hov = ui_rect_contains(gb, mouse_x, mouse_y);
+        if (gb_hov) {
+            vk_draw_rounded_rect(&app->draw, gb.x, gb.y, gb.width, gb.height, 4.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_settings.ready) {
+            icon_draw(&app->icons, &app->icon_settings, ctx, gb.x + 6.0f, gb.y + 6.0f, 16.0f, 16.0f, th->gutter_fg);
+        }
+    }
+}
+
+static void draw_tool_stripe(App *app, VkContext *ctx)
+{
+    UiLayout *ui = &app->ui_layout;
+    if (!ui->initialized) return;
+
+    const Theme *th = theme_current();
+    Clay_BoundingBox st = ui->stripe_bounds;
+
+    /* Stripe background & right border */
+    vk_draw_rounded_rect(&app->draw, st.x, st.y, st.width, st.height, 0.0f, 1.0f, th->tab_strip_bg);
+    vk_draw_rounded_rect(&app->draw, st.x + st.width - 1.0f, st.y, 1.0f, st.height, 0.0f, 1.0f, th->tab_edge);
+
+    float mouse_x, mouse_y;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+
+    /* 1. Project Tool Window Icon */
+    Clay_BoundingBox pb = ui->stripe_project_bounds;
+    if (pb.width > 0) {
+        bool is_active = (ui->active_tool == TOOL_STRIPE_PROJECT && ui->sidebar_open);
+        bool pb_hov = ui_rect_contains(pb, mouse_x, mouse_y);
+
+        if (is_active) {
+            vk_draw_rounded_rect(&app->draw, pb.x, pb.y, pb.width, pb.height, 6.0f, 1.0f, th->sidebar_selected);
+            /* Left blue indicator bar */
+            vk_draw_rounded_rect(&app->draw, pb.x - 2.0f, pb.y + 6.0f, 3.0f, pb.height - 12.0f, 1.5f, 1.0f, th->caret);
+        } else if (pb_hov) {
+            vk_draw_rounded_rect(&app->draw, pb.x, pb.y, pb.width, pb.height, 6.0f, 1.0f, th->sidebar_hover);
+        }
+
+        if (app->project_icons_ok && app->project_folder_icon.ready) {
+            icon_draw(&app->icons, &app->project_folder_icon, ctx, pb.x + 9.0f, pb.y + 9.0f, 18.0f, 18.0f,
+                      is_active ? th->fg : th->gutter_fg);
+        }
+    }
+
+    /* 2. Search Everywhere Icon */
+    Clay_BoundingBox sb = ui->stripe_search_bounds;
+    if (sb.width > 0) {
+        bool sb_hov = ui_rect_contains(sb, mouse_x, mouse_y);
+        if (sb_hov) {
+            vk_draw_rounded_rect(&app->draw, sb.x, sb.y, sb.width, sb.height, 6.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_search.ready) {
+            icon_draw(&app->icons, &app->icon_search, ctx, sb.x + 9.0f, sb.y + 9.0f, 18.0f, 18.0f, th->gutter_fg);
+        }
+    }
+
+    /* 3. Git Branch Icon */
+    Clay_BoundingBox gb = ui->stripe_git_bounds;
+    if (gb.width > 0) {
+        bool gb_hov = ui_rect_contains(gb, mouse_x, mouse_y);
+        if (gb_hov) {
+            vk_draw_rounded_rect(&app->draw, gb.x, gb.y, gb.width, gb.height, 6.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_git_branch.ready) {
+            icon_draw(&app->icons, &app->icon_git_branch, ctx, gb.x + 9.0f, gb.y + 9.0f, 18.0f, 18.0f, th->gutter_fg);
+        }
+    }
+
+    /* 4. Debug / Run Icon */
+    Clay_BoundingBox db = ui->stripe_debug_bounds;
+    if (db.width > 0) {
+        bool db_hov = ui_rect_contains(db, mouse_x, mouse_y);
+        if (db_hov) {
+            vk_draw_rounded_rect(&app->draw, db.x, db.y, db.width, db.height, 6.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_bug.ready) {
+            icon_draw(&app->icons, &app->icon_bug, ctx, db.x + 9.0f, db.y + 9.0f, 18.0f, 18.0f, th->gutter_fg);
+        }
+    }
+
+    /* 5. Bottom Settings Icon */
+    Clay_BoundingBox tb = ui->stripe_settings_bounds;
+    if (tb.width > 0) {
+        bool tb_hov = ui_rect_contains(tb, mouse_x, mouse_y);
+        if (tb_hov) {
+            vk_draw_rounded_rect(&app->draw, tb.x, tb.y, tb.width, tb.height, 6.0f, 1.0f, th->sidebar_hover);
+        }
+        if (app->tool_icons_ok && app->icon_settings.ready) {
+            icon_draw(&app->icons, &app->icon_settings, ctx, tb.x + 9.0f, tb.y + 9.0f, 18.0f, 18.0f, th->gutter_fg);
+        }
+    }
+}
 
 static void draw_status_bar(App *app, VkContext *ctx)
 {
@@ -976,6 +1167,9 @@ int main(int argc, char **argv)
     app.terminal_open = false;
     app.terminal_height = TERM_DEFAULT_HEIGHT;
 
+    /* Initialize Clay Layout Engine */
+    ui_layout_init(&app.ui_layout, 1280.0f, 800.0f);
+
     SDL_StartTextInput(window);
     printf("Ready – %zu fonts available. Press F1 to pick.\n", app.fonts.count);
 
@@ -1391,26 +1585,50 @@ int main(int argc, char **argv)
 
         float ww = (float)app.vk.swapchain_extent.width;
         float wh = (float)app.vk.swapchain_extent.height;
-        const float tab_h = 28.0f;
-        const float status_h = 26.0f;
+
+        /* Update Clay Flexbox Layout Engine */
+        float mx = 0, my = 0;
+        SDL_GetMouseState(&mx, &my);
+        ui_layout_update(&app.ui_layout, &app, ww, wh, mx, my,
+                         (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_LMASK) != 0);
+
+        /* 1. JetBrains Top Main Toolbar */
+        draw_main_toolbar(&app, &app.vk);
+
+        /* 2. Left Tool Window Stripe (Icon Rail) */
+        draw_tool_stripe(&app, &app.vk);
+
+        /* 3. Project Tool Window (Sidebar) */
+        if (app.ui_layout.sidebar_open) {
+            draw_project_sidebar(&app, &app.vk, wh,
+                                 app.ui_layout.toolbar_bounds.height,
+                                 app.ui_layout.statusbar_bounds.height);
+        }
+
+        /* 4. Flush Editor Tab Bar */
         draw_tab_bar(&app, &app.vk);
-        draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
 
-        float term_h = app.terminal_open ? app.terminal_height : 0.0f;
-        float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
-        float editor_h = wh - tab_h - status_h - term_h;
-        if (editor_h < 50.0f) editor_h = 50.0f;
-
+        /* 5. Main Editor Buffer */
         Editor *ed = app_ed(&app);
         if (ed) {
             editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
-            editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
-                        editor_w, editor_h);
+            float ed_x = app.ui_layout.editor_bounds.width > 0 ? app.ui_layout.editor_bounds.x : PROJECT_SIDEBAR_WIDTH;
+            float ed_y = app.ui_layout.editor_bounds.height > 0 ? app.ui_layout.editor_bounds.y : 28.0f;
+            float ed_w = app.ui_layout.editor_bounds.width > 0 ? app.ui_layout.editor_bounds.width : (ww - ed_x);
+            float ed_h = app.ui_layout.editor_bounds.height > 0 ? app.ui_layout.editor_bounds.height : (wh - 28.0f - 26.0f);
+            editor_draw(ed, &app.vk, ed_x, ed_y, ed_w, ed_h);
         }
-        if (app.terminal_open) {
-            terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
-                          PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
+
+        /* 6. Bottom Dockable Tool Window (Terminal & Problems) */
+        if (app.terminal_open || app.ui_layout.dock_open) {
+            float dk_x = app.ui_layout.dock_bounds.width > 0 ? app.ui_layout.dock_bounds.x : PROJECT_SIDEBAR_WIDTH;
+            float dk_y = app.ui_layout.dock_bounds.height > 0 ? app.ui_layout.dock_bounds.y : (wh - 200.0f);
+            float dk_w = app.ui_layout.dock_bounds.width > 0 ? app.ui_layout.dock_bounds.width : (ww - dk_x);
+            float dk_h = app.ui_layout.dock_bounds.height > 0 ? app.ui_layout.dock_bounds.height : 200.0f;
+            terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font, dk_x, dk_y, dk_w, dk_h);
         }
+
+        /* 7. Bottom Status Bar */
         draw_status_bar(&app, &app.vk);
 
         if (app.goto_open)
@@ -1464,6 +1682,7 @@ int main(int argc, char **argv)
     free(app.text_frag);
     vk_draw_destroy(&app.draw);
     vk_context_destroy(&app.vk);
+    ui_layout_destroy(&app.ui_layout);
     lua_bridge_destroy();
     SDL_DestroyWindow(window);
     SDL_Quit();

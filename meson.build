@@ -97,6 +97,7 @@ sources = files(
   'src/terminal.c',
   'src/project.c',
   'src/welcome.c',
+  'src/ui_layout.c',
 )
 
 executable(

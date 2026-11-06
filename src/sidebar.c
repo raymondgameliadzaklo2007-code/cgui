@@ -14,6 +14,7 @@
 #include "sidebar.h"
 #include "tab_bar.h"
 #include "project_icons.h"
+#include "tool_icons.h"
 #include "theme.h"
 
 typedef struct ProjectScan {
@@ -274,26 +275,36 @@ static Icon *project_file_icon(App *app, const ProjectEntry *entry,
                                uint8_t tint[4])
 {
     const Theme *th = theme_current();
-    /* Monochrome icons matching Zed's default: unified subtle tone across all file types */
     memcpy(tint, th->sidebar_muted, 4);
     if (entry->directory) {
         return entry->expanded ? &app->project_folder_open_icon
                                : &app->project_folder_icon;
     } else {
-        const char *ext = strrchr(entry->name, '.');
+        const char *name = entry->name;
+        if (strcmp(name, "meson.build") == 0 || strcmp(name, "CMakeLists.txt") == 0 ||
+            strcmp(name, "Makefile") == 0 || strcmp(name, "package.json") == 0 ||
+            strcmp(name, "Cargo.toml") == 0) {
+            return &app->project_file_cog_icon;
+        }
+        const char *ext = strrchr(name, '.');
         if (ext && (strcmp(ext, ".c") == 0 || strcmp(ext, ".C") == 0 ||
-                    strcmp(ext, ".h") == 0 || strcmp(ext, ".H") == 0)) {
-            return &app->project_file_code_icon;
-        } else if (ext && (strcmp(ext, ".json") == 0 ||
-                           strcmp(ext, ".vert") == 0 ||
-                           strcmp(ext, ".frag") == 0 ||
-                           strcmp(ext, ".lua") == 0 ||
+                    strcmp(ext, ".h") == 0 || strcmp(ext, ".H") == 0 ||
+                    strcmp(ext, ".cpp") == 0 || strcmp(ext, ".hpp") == 0)) {
+            return &app->project_file_code_c_icon;
+        } else if (ext && (strcmp(ext, ".json") == 0 || strcmp(ext, ".toml") == 0 ||
+                           strcmp(ext, ".yaml") == 0 || strcmp(ext, ".yml") == 0)) {
+            return &app->project_file_cog_icon;
+        } else if (ext && (strcmp(ext, ".md") == 0 || strcmp(ext, ".txt") == 0 ||
+                           strcmp(ext, ".rst") == 0)) {
+            return &app->project_file_book_icon;
+        } else if (ext && (strcmp(ext, ".lua") == 0 || strcmp(ext, ".py") == 0 ||
+                           strcmp(ext, ".rs") == 0 || strcmp(ext, ".go") == 0 ||
+                           strcmp(ext, ".zig") == 0 || strcmp(ext, ".sh") == 0 ||
+                           strcmp(ext, ".vert") == 0 || strcmp(ext, ".frag") == 0 ||
                            strcmp(ext, ".scm") == 0)) {
             return &app->project_file_generic_code_icon;
-        } else if (ext && (strcmp(ext, ".md") == 0 || strcmp(ext, ".txt") == 0)) {
-            return &app->project_file_book_icon;
         } else {
-            return &app->project_file_text_icon;
+            return &app->project_file_icon;
         }
     }
 }
@@ -303,43 +314,72 @@ void project_icons_destroy(App *app)
     icon_destroy(&app->project_folder_icon, &app->vk);
     icon_destroy(&app->project_folder_open_icon, &app->vk);
     icon_destroy(&app->project_file_code_icon, &app->vk);
+    icon_destroy(&app->project_file_code_c_icon, &app->vk);
+    icon_destroy(&app->project_file_cog_icon, &app->vk);
+    icon_destroy(&app->project_file_icon, &app->vk);
     icon_destroy(&app->project_file_text_icon, &app->vk);
     icon_destroy(&app->project_file_generic_code_icon, &app->vk);
     icon_destroy(&app->project_file_book_icon, &app->vk);
     icon_destroy(&app->project_chevron_right_icon, &app->vk);
     icon_destroy(&app->project_chevron_down_icon, &app->vk);
     icon_destroy(&app->project_plus_icon, &app->vk);
+    icon_destroy(&app->icon_play, &app->vk);
+    icon_destroy(&app->icon_hammer, &app->vk);
+    icon_destroy(&app->icon_bug, &app->vk);
+    icon_destroy(&app->icon_search, &app->vk);
+    icon_destroy(&app->icon_settings, &app->vk);
+    icon_destroy(&app->icon_git_branch, &app->vk);
     app->project_icons_ok = false;
+    app->tool_icons_ok = false;
 }
 
 bool project_icons_load(App *app)
 {
     bool loaded =
         icon_load_svg_memory(&app->project_folder_icon, &app->vk,
-                             project_folder_svg, sizeof(project_folder_svg)) &&
+                             icon_folder_svg, sizeof(icon_folder_svg)) &&
         icon_load_svg_memory(&app->project_folder_open_icon, &app->vk,
-                             project_folder_open_svg, sizeof(project_folder_open_svg)) &&
+                             icon_folder_open_svg, sizeof(icon_folder_open_svg)) &&
         icon_load_svg_memory(&app->project_file_code_icon, &app->vk,
-                             project_file_code_svg, sizeof(project_file_code_svg)) &&
+                             icon_file_code_svg, sizeof(icon_file_code_svg)) &&
+        icon_load_svg_memory(&app->project_file_code_c_icon, &app->vk,
+                             icon_file_code_c_svg, sizeof(icon_file_code_c_svg)) &&
+        icon_load_svg_memory(&app->project_file_cog_icon, &app->vk,
+                             icon_file_cog_svg, sizeof(icon_file_cog_svg)) &&
+        icon_load_svg_memory(&app->project_file_icon, &app->vk,
+                             icon_file_svg, sizeof(icon_file_svg)) &&
         icon_load_svg_memory(&app->project_file_text_icon, &app->vk,
-                             project_file_text_svg, sizeof(project_file_text_svg)) &&
+                             icon_file_text_svg, sizeof(icon_file_text_svg)) &&
         icon_load_svg_memory(&app->project_file_generic_code_icon, &app->vk,
-                             project_file_generic_code_svg,
-                             sizeof(project_file_generic_code_svg)) &&
+                             icon_file_generic_code_svg, sizeof(icon_file_generic_code_svg)) &&
         icon_load_svg_memory(&app->project_file_book_icon, &app->vk,
-                             project_file_book_svg, sizeof(project_file_book_svg)) &&
+                             icon_file_book_svg, sizeof(icon_file_book_svg)) &&
         icon_load_svg_memory(&app->project_chevron_right_icon, &app->vk,
-                             project_chevron_right_svg, sizeof(project_chevron_right_svg)) &&
+                             icon_chevron_right_svg, sizeof(icon_chevron_right_svg)) &&
         icon_load_svg_memory(&app->project_chevron_down_icon, &app->vk,
-                             project_chevron_down_svg, sizeof(project_chevron_down_svg)) &&
+                             icon_chevron_down_svg, sizeof(icon_chevron_down_svg)) &&
         icon_load_svg_memory(&app->project_plus_icon, &app->vk,
-                             project_plus_svg, sizeof(project_plus_svg));
+                             icon_plus_svg, sizeof(icon_plus_svg)) &&
+        icon_load_svg_memory(&app->icon_play, &app->vk,
+                             icon_play_svg, sizeof(icon_play_svg)) &&
+        icon_load_svg_memory(&app->icon_hammer, &app->vk,
+                             icon_hammer_svg, sizeof(icon_hammer_svg)) &&
+        icon_load_svg_memory(&app->icon_bug, &app->vk,
+                             icon_bug_svg, sizeof(icon_bug_svg)) &&
+        icon_load_svg_memory(&app->icon_search, &app->vk,
+                             icon_search_svg, sizeof(icon_search_svg)) &&
+        icon_load_svg_memory(&app->icon_settings, &app->vk,
+                             icon_settings_svg, sizeof(icon_settings_svg)) &&
+        icon_load_svg_memory(&app->icon_git_branch, &app->vk,
+                             icon_git_branch_svg, sizeof(icon_git_branch_svg));
+
     if (!loaded) {
-        fprintf(stderr, "Project navigator icons could not be loaded\n");
+        fprintf(stderr, "Project navigator and tool icons could not be loaded\n");
         project_icons_destroy(app);
         return false;
     }
     app->project_icons_ok = true;
+    app->tool_icons_ok = true;
     return true;
 }
 

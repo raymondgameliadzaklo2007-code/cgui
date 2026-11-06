@@ -13,15 +13,14 @@
 struct App;
 struct VkContext;
 
-typedef enum WelcomeTab {
-    WELCOME_TAB_NEW_PROJECT = 0,
-    WELCOME_TAB_RECENTS,
-    WELCOME_TAB_COUNT
-} WelcomeTab;
+typedef enum WelcomeMode {
+    WELCOME_MODE_HUB = 0,         /* Xcode Welcome Hub: Actions on left, Recents on right */
+    WELCOME_MODE_NEW_PROJECT      /* Template picker and configuration */
+} WelcomeMode;
 
 typedef struct WelcomeState {
-    WelcomeTab active_tab;
-    int        selected_template;    /* index in ProjectTemplate */
+    WelcomeMode mode;
+    int         selected_template;    /* index in ProjectTemplate */
     char       project_name[128];
     int        project_name_len;
     char       parent_location[512];

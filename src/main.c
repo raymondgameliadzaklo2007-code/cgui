@@ -1389,45 +1389,45 @@ int main(int argc, char **argv)
             continue;
         }
 
+        float ww = (float)app.vk.swapchain_extent.width;
+        float wh = (float)app.vk.swapchain_extent.height;
+        const float tab_h = 28.0f;
+        const float status_h = 26.0f;
+        draw_tab_bar(&app, &app.vk);
+        draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
+
+        float term_h = app.terminal_open ? app.terminal_height : 0.0f;
+        float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
+        float editor_h = wh - tab_h - status_h - term_h;
+        if (editor_h < 50.0f) editor_h = 50.0f;
+
+        Editor *ed = app_ed(&app);
+        if (ed) {
+            editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
+            editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
+                        editor_w, editor_h);
+        }
+        if (app.terminal_open) {
+            terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
+                          PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
+        }
+        draw_status_bar(&app, &app.vk);
+
+        if (app.goto_open)
+            draw_goto_bar(&app, &app.vk);
+        if (app.find_open)
+            draw_find_bar(&app, &app.vk);
+        if (app.picker_open)
+            draw_picker(&app, &app.vk);
+        if (app.theme_picker_open)
+            draw_theme_picker(&app, &app.vk);
+        if (app.palette_open)
+            draw_palette(&app, &app.vk);
+
+        lsp_draw_ui(&app, &app.vk);
+
         if (app.welcome_open) {
             welcome_draw(&app, &app.vk);
-        } else {
-            float ww = (float)app.vk.swapchain_extent.width;
-            float wh = (float)app.vk.swapchain_extent.height;
-            const float tab_h = 28.0f;
-            const float status_h = 26.0f;
-            draw_tab_bar(&app, &app.vk);
-            draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
-
-            float term_h = app.terminal_open ? app.terminal_height : 0.0f;
-            float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
-            float editor_h = wh - tab_h - status_h - term_h;
-            if (editor_h < 50.0f) editor_h = 50.0f;
-
-            Editor *ed = app_ed(&app);
-            if (ed) {
-                editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
-                editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
-                            editor_w, editor_h);
-            }
-            if (app.terminal_open) {
-                terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
-                              PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
-            }
-            draw_status_bar(&app, &app.vk);
-
-            if (app.goto_open)
-                draw_goto_bar(&app, &app.vk);
-            if (app.find_open)
-                draw_find_bar(&app, &app.vk);
-            if (app.picker_open)
-                draw_picker(&app, &app.vk);
-            if (app.theme_picker_open)
-                draw_theme_picker(&app, &app.vk);
-            if (app.palette_open)
-                draw_palette(&app, &app.vk);
-
-            lsp_draw_ui(&app, &app.vk);
         }
 
         if (!vk_context_end_frame(&app.vk))

@@ -166,3 +166,8 @@ target_link_libraries(cgui PRIVATE
     ${MSDFGEN_TARGET}
     Vulkan::Vulkan
 )
+
+# Automatically copy assets directory to build directory
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+endif()

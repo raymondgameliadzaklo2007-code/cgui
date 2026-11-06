@@ -98,6 +98,8 @@ public:
     Element& border(float width, const Color& color);
     Element& radius(float r);
     Element& text(std::string text, const Color& color = Color::rgb(220, 224, 230));
+    Element& font_size(float size);
+    Element& text_color(const Color& color);
 
     // Interactive event callbacks
     using ClickCallback = std::function<void()>;

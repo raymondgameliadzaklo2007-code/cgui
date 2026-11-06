@@ -18,7 +18,16 @@ Vulkan2DRenderer::Vulkan2DRenderer(VulkanContext& context) : context_(context) {
         render_pass_
     );
 
+    font_atlas_ = std::make_shared<font::FontAtlas>();
+    text_pipeline_ = std::make_unique<TextPipeline>(
+        context_.device(),
+        context_.physical_device(),
+        render_pass_,
+        *font_atlas_
+    );
+
     quad_instances_.reserve(2048);
+    glyph_instances_.reserve(8192);
 }
 
 Vulkan2DRenderer::~Vulkan2DRenderer() {
@@ -26,6 +35,7 @@ Vulkan2DRenderer::~Vulkan2DRenderer() {
 
     context_.wait_idle();
 
+    text_pipeline_.reset();
     quad_pipeline_.reset();
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -198,6 +208,7 @@ void Vulkan2DRenderer::begin_frame() {
     vkBeginCommandBuffer(command_buffers_[current_frame_], &begin_info);
 
     quad_instances_.clear();
+    glyph_instances_.clear();
     frame_started_ = true;
 }
 
@@ -212,7 +223,7 @@ void Vulkan2DRenderer::collect_instances(const std::shared_ptr<ui::Element>& el,
 
     const auto& style = el->style();
 
-    // If element has a visible background or border, add a quad instance
+    // 1. If element has a visible background or border, add a quad instance
     if (style.background.has_value() || (style.border_color.has_value() && style.border_width > 0.0f)) {
         QuadInstanceData inst{};
         inst.rect = glm::vec4(abs_x, abs_y, bounds.width, bounds.height);
@@ -241,6 +252,40 @@ void Vulkan2DRenderer::collect_instances(const std::shared_ptr<ui::Element>& el,
         quad_instances_.push_back(inst);
     }
 
+    // 2. If element has text, collect glyph instances
+    if (!style.text.empty() && style.text_color.has_value() && font_atlas_) {
+        const auto& col = style.text_color.value();
+        float font_size = style.font_size > 0.0f ? style.font_size : 14.0f;
+
+        // Vertically center text in element height, baseline aligned
+        float text_h = font_atlas_->line_height() * font_size;
+        float base_y = abs_y + (bounds.height > 0.0f ? (bounds.height - text_h) * 0.5f : 0.0f) + (font_atlas_->ascender() * font_size);
+        float cur_x = abs_x;
+
+        for (char ch : style.text) {
+            if (ch == '\n') continue;
+            const auto* glyph = font_atlas_->get_glyph(static_cast<uint32_t>(ch));
+            if (!glyph) continue;
+
+            if (ch != ' ') {
+                float gx = cur_x + glyph->plane_bounds.x * font_size;
+                float gy = base_y - glyph->plane_bounds.w * font_size;
+                float gw = (glyph->plane_bounds.z - glyph->plane_bounds.x) * font_size;
+                float gh = (glyph->plane_bounds.w - glyph->plane_bounds.y) * font_size;
+
+                GlyphInstanceData g_inst{};
+                g_inst.rect = glm::vec4(gx, gy, gw, gh);
+                g_inst.uv = glyph->uv_bounds;
+                g_inst.color = glm::vec4(col.r, col.g, col.b, col.a);
+                g_inst.params = glm::vec4(font_atlas_->px_range(), screen_w, screen_h, 0.0f);
+
+                glyph_instances_.push_back(g_inst);
+            }
+
+            cur_x += glyph->advance * font_size;
+        }
+    }
+
     // Traverse children in layout order
     for (const auto& child : el->children()) {
         collect_instances(child, abs_x, abs_y, screen_w, screen_h);
@@ -257,11 +302,12 @@ void Vulkan2DRenderer::render_element_tree(const std::shared_ptr<ui::Element>& r
     // 1. Calculate Yoga Flexbox Layout for the entire tree
     root->calculate_layout(screen_w, screen_h);
 
-    // 2. Traverse and collect all styled quads
+    // 2. Traverse and collect all styled quads and text glyphs
     collect_instances(root, 0.0f, 0.0f, screen_w, screen_h);
 
-    // 3. Upload instances to dynamic ring buffer
+    // 3. Upload instances to dynamic ring buffers
     quad_pipeline_->upload_instances(quad_instances_);
+    text_pipeline_->upload_instances(glyph_instances_);
 
     // 4. Record render pass and instanced draw command
     VkCommandBuffer cmd = command_buffers_[current_frame_];
@@ -279,8 +325,13 @@ void Vulkan2DRenderer::render_element_tree(const std::shared_ptr<ui::Element>& r
 
     vkCmdBeginRenderPass(cmd, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
+    // Draw solid & rounded background quads
     quad_pipeline_->bind(cmd, extent);
     quad_pipeline_->draw(cmd, static_cast<uint32_t>(quad_instances_.size()));
+
+    // Draw MSDF text glyphs over backgrounds
+    text_pipeline_->bind(cmd, extent);
+    text_pipeline_->draw(cmd, static_cast<uint32_t>(glyph_instances_.size()));
 
     vkCmdEndRenderPass(cmd);
 }

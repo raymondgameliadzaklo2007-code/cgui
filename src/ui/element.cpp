@@ -173,6 +173,25 @@ Element& Element::radius(float r) {
 Element& Element::text(std::string text, const Color& color) {
     style_.text = std::move(text);
     style_.text_color = color;
+    // Provide natural flexbox bounds if not explicitly overridden
+    if (YGNodeStyleGetWidth(yoga_node_).unit == YGUnitUndefined) {
+        float estimated_w = static_cast<float>(style_.text.length()) * (style_.font_size * 0.55f);
+        YGNodeStyleSetWidth(yoga_node_, estimated_w);
+    }
+    if (YGNodeStyleGetHeight(yoga_node_).unit == YGUnitUndefined) {
+        float estimated_h = style_.font_size * 1.30f;
+        YGNodeStyleSetHeight(yoga_node_, estimated_h);
+    }
+    return *this;
+}
+
+Element& Element::font_size(float size) {
+    style_.font_size = size;
+    return *this;
+}
+
+Element& Element::text_color(const Color& color) {
+    style_.text_color = color;
     return *this;
 }
 

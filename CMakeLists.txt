@@ -115,7 +115,36 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# 5. Project Sources & Executable
+# 5. msdfgen (Multi-channel Signed Distance Field generator)
+# ---------------------------------------------------------------------------
+find_package(msdfgen QUIET CONFIG)
+if (TARGET msdfgen::msdfgen)
+    set(MSDFGEN_TARGET msdfgen::msdfgen)
+    message(STATUS "Using system msdfgen")
+else()
+    message(STATUS "msdfgen not found on host. Fetching msdfgen via FetchContent...")
+    set(MSDFGEN_BUILD_STANDALONE OFF CACHE BOOL "" FORCE)
+    set(MSDFGEN_USE_OPENMP OFF CACHE BOOL "" FORCE)
+    set(MSDFGEN_INSTALL OFF CACHE BOOL "" FORCE)
+    set(MSDFGEN_USE_SKIA OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        msdfgen
+        GIT_REPOSITORY https://github.com/Chlumsky/msdfgen.git
+        GIT_TAG v1.12
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(msdfgen)
+    if (TARGET msdfgen::msdfgen)
+        set(MSDFGEN_TARGET msdfgen::msdfgen)
+    elseif (TARGET msdfgen)
+        set(MSDFGEN_TARGET msdfgen)
+    elseif (TARGET msdfgen-core)
+        set(MSDFGEN_TARGET msdfgen-core)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# 6. Project Sources & Executable
 # ---------------------------------------------------------------------------
 file(GLOB_RECURSE SOURCES
     src/*.cpp
@@ -134,5 +163,6 @@ target_link_libraries(cgui PRIVATE
     ${GLFW_TARGET}
     ${YOGA_TARGET}
     ${GLM_TARGET}
+    ${MSDFGEN_TARGET}
     Vulkan::Vulkan
 )

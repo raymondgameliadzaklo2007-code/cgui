@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 #include "vulkan_context.hpp"
 #include "quad_pipeline.hpp"
+#include "text_pipeline.hpp"
+#include "font/font_atlas.hpp"
 #include "../ui/element.hpp"
 
 namespace cgui::renderer {
@@ -24,6 +26,8 @@ public:
     void render_element_tree(const std::shared_ptr<ui::Element>& root);
     void end_frame();
 
+    [[nodiscard]] std::shared_ptr<font::FontAtlas> font_atlas() const noexcept { return font_atlas_; }
+
 private:
     void create_render_pass();
     void create_framebuffers();
@@ -41,13 +45,16 @@ private:
     VkCommandPool command_pool_{VK_NULL_HANDLE};
     std::vector<VkCommandBuffer> command_buffers_;
 
+    std::shared_ptr<font::FontAtlas> font_atlas_;
     std::unique_ptr<QuadPipeline> quad_pipeline_;
+    std::unique_ptr<TextPipeline> text_pipeline_;
 
     std::vector<VkSemaphore> image_available_semaphores_;
     std::vector<VkSemaphore> render_finished_semaphores_;
     std::vector<VkFence> in_flight_fences_;
 
     std::vector<QuadInstanceData> quad_instances_;
+    std::vector<GlyphInstanceData> glyph_instances_;
 
     size_t current_frame_{0};
     uint32_t current_image_index_{0};

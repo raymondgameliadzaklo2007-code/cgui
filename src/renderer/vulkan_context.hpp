@@ -39,6 +39,8 @@ public:
     [[nodiscard]] VkQueue present_queue() const noexcept { return present_queue_; }
     [[nodiscard]] VkSwapchainKHR swapchain() const noexcept { return swapchain_; }
     [[nodiscard]] VkExtent2D swapchain_extent() const noexcept { return swapchain_extent_; }
+    [[nodiscard]] VkFormat swapchain_image_format() const noexcept { return swapchain_image_format_; }
+    [[nodiscard]] const std::vector<VkImageView>& swapchain_image_views() const noexcept { return swapchain_image_views_; }
 
     void wait_idle() const noexcept;
     void recreate_swapchain();

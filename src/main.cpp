@@ -24,6 +24,7 @@ int main() {
 
         window.on_resize([&](int /*w*/, int /*h*/) {
             vk_context.recreate_swapchain();
+            renderer.on_swapchain_resized();
         });
 
         // 3. Construct GPUI-style Declarative Layout Tree using Yoga

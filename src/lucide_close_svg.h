@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* Zed "close" icon (Apache-2.0), vendored in assets/icons/close.svg. */
+/* VS Code Codicon "close" icon (MIT), vendored in assets/icons/close.svg. */
 static const uint8_t lucide_close_svg_data[] = {
 #embed "../assets/icons/close.svg"
 };

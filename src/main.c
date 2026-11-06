@@ -1071,15 +1071,6 @@ int main(int argc, char **argv)
     cgui_apply_theme_all(&app, theme_current()->name);
 
     editor_set_draw_context(&app.draw);
-    const char *starter =
-        "// cgui editor\n"
-        "// F1 fonts | Ctrl+F find | Ctrl+O open | Ctrl+S save\n"
-        "#include <stdio.h>\n"
-        "\n"
-        "int main(void) {\n"
-        "    printf(\"hello\\n\");\n"
-        "    return 0;\n"
-        "}\n";
     app.tab_count = 0;
     app.tab_active = 0;
     welcome_init(&app);

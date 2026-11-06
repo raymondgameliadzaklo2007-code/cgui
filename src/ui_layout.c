@@ -3,7 +3,20 @@
  */
 
 #define CLAY_IMPLEMENTATION
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 #include "clay.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 #include "ui_layout.h"
 #include "app.h"
@@ -64,7 +77,12 @@ void ui_layout_destroy(UiLayout *ui)
 
 static Clay_BoundingBox get_bounds(const char *id_str)
 {
-    Clay_ElementData data = Clay_GetElementData(Clay_GetElementId(CLAY_STRING((char *)id_str)));
+    Clay_String s = {
+        .isStaticallyAllocated = true,
+        .length = (int32_t)strlen(id_str),
+        .chars = id_str,
+    };
+    Clay_ElementData data = Clay_GetElementData(Clay_GetElementId(s));
     if (data.found) {
         return data.boundingBox;
     }

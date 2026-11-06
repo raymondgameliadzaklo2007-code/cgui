@@ -90,7 +90,7 @@ void welcome_load_recents(WelcomeState *st)
 
             const char *slash = strrchr(line, '/');
             const char *base = slash ? slash + 1 : line;
-            snprintf(st->recent_names[st->recent_count], sizeof(st->recent_names[0]), "%s", base[0] ? base : line);
+            snprintf(st->recent_names[st->recent_count], sizeof(st->recent_names[0]), "%.127s", base[0] ? base : line);
 
             st->recent_count++;
         }
@@ -195,8 +195,8 @@ static bool welcome_create_project(App *app)
     project_config_detect(&app->project_cfg, app->project_root);
 
     const char *entry_rel = project_template_entry_file((ProjectTemplate)st->selected_template);
-    char entry_abs[1024];
-    snprintf(entry_abs, sizeof(entry_abs), "%s/%s", target_dir, entry_rel);
+    char entry_abs[2048];
+    snprintf(entry_abs, sizeof(entry_abs), "%s/%s", target_dir, entry_rel ? entry_rel : "main.c");
     tab_add(app, entry_abs, NULL);
 
     update_window_title(app);

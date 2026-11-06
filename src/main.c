@@ -722,8 +722,14 @@ static void cmd_toggle_terminal(App *app)
     terminal_toggle(app);
 }
 
+static void cmd_new_project(App *app)
+{
+    welcome_open(app);
+}
+
 const Command app_commands[] = {
-    { "Project: Run Active Configuration", "Ctrl+B",       cmd_project_run_active },
+    { "Project: New Project / Generator Hub", "Ctrl+Shift+N", cmd_new_project },
+    { "Project: Run Active Configuration",    "Ctrl+B",       cmd_project_run_active },
     { "Project: Build Project",            "Ctrl+Shift+B", cmd_project_build },
     { "Project: Cycle Target (Build/Run)", "Alt+Shift+F10", cmd_project_next_target },
     { "Project: Reload Configurations",    "Ctrl+Alt+R",   cmd_project_reload },
@@ -885,6 +891,8 @@ int main(int argc, char **argv)
         "}\n";
     app.tab_count = 0;
     app.tab_active = 0;
+    welcome_init(&app);
+
     SDL_PathInfo argument_info;
     bool argument_is_directory = argc > 1 &&
         SDL_GetPathInfo(argv[1], &argument_info) &&
@@ -894,15 +902,17 @@ int main(int argc, char **argv)
             fprintf(stderr, "Editor create failed\n");
             return 1;
         }
-    } else {
-        if (!tab_add(&app, NULL, starter)) {
-            fprintf(stderr, "Editor create failed\n");
-            return 1;
-        }
+    } else if (argc <= 1) {
+        /* Launch directly into JetBrains / Xcode style Welcome & Project Hub */
+        welcome_open(&app);
     }
-    if (!project_open_initial(&app, argc > 1 ? argv[1] : NULL))
-        fprintf(stderr, "Project navigator could not load an initial folder\n");
-    project_config_detect(&app.project_cfg, app.project_root);
+    if (!project_open_initial(&app, argc > 1 ? argv[1] : NULL)) {
+        if (argc > 1) fprintf(stderr, "Project navigator could not load an initial folder\n");
+    }
+    if (app.project_root[0]) {
+        project_config_detect(&app.project_cfg, app.project_root);
+        welcome_add_recent(app.project_root);
+    }
 
 
     /* Icons (optional assets) */
@@ -1031,6 +1041,11 @@ int main(int argc, char **argv)
             if (app.save_dialog_open)
                 continue;
 
+            if (app.welcome_open) {
+                if (welcome_handle_event(&app, &ev))
+                    continue;
+            }
+
             if (lsp_handle_event(&app, &ev))
                 continue;
 
@@ -1061,6 +1076,13 @@ int main(int argc, char **argv)
 
                 if (alt && !ctrl && ev.key.key == SDLK_T) {
                     cmd_toggle_theme(&app);
+                    continue;
+                }
+
+                /* New Project / Welcome Hub: Ctrl+Shift+N */
+                if (!app.picker_open && !app.theme_picker_open && (ctrl || gui) && shift &&
+                    (ev.key.key == SDLK_N || ev.key.key == 'n' || ev.key.key == 'N')) {
+                    cmd_new_project(&app);
                     continue;
                 }
 
@@ -1332,7 +1354,11 @@ int main(int argc, char **argv)
         }
         if (app.pending_project[0]) {
             project_set_root(&app, app.pending_project);
+            project_config_detect(&app.project_cfg, app.project_root);
+            welcome_add_recent(app.project_root);
+            welcome_close(&app);
             app.pending_project[0] = 0;
+            update_window_title(&app);
         }
         if (app.pending_save[0]) {
             SaveIntent intent = app.save_intent;
@@ -1363,42 +1389,46 @@ int main(int argc, char **argv)
             continue;
         }
 
-        float ww = (float)app.vk.swapchain_extent.width;
-        float wh = (float)app.vk.swapchain_extent.height;
-        const float tab_h = 28.0f;
-        const float status_h = 26.0f;
-        draw_tab_bar(&app, &app.vk);
-        draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
+        if (app.welcome_open) {
+            welcome_draw(&app, &app.vk);
+        } else {
+            float ww = (float)app.vk.swapchain_extent.width;
+            float wh = (float)app.vk.swapchain_extent.height;
+            const float tab_h = 28.0f;
+            const float status_h = 26.0f;
+            draw_tab_bar(&app, &app.vk);
+            draw_project_sidebar(&app, &app.vk, wh, tab_h, status_h);
 
-        float term_h = app.terminal_open ? app.terminal_height : 0.0f;
-        float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
-        float editor_h = wh - tab_h - status_h - term_h;
-        if (editor_h < 50.0f) editor_h = 50.0f;
+            float term_h = app.terminal_open ? app.terminal_height : 0.0f;
+            float editor_w = ww - PROJECT_SIDEBAR_WIDTH;
+            float editor_h = wh - tab_h - status_h - term_h;
+            if (editor_h < 50.0f) editor_h = 50.0f;
 
-        Editor *ed = app_ed(&app);
-        if (ed) {
-            editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
-            editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
-                        editor_w, editor_h);
+            Editor *ed = app_ed(&app);
+            if (ed) {
+                editor_set_find_query(ed, app.find_open && app.find_len > 0 ? app.find_query : NULL, app.find_case);
+                editor_draw(ed, &app.vk, PROJECT_SIDEBAR_WIDTH, tab_h,
+                            editor_w, editor_h);
+            }
+            if (app.terminal_open) {
+                terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
+                              PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
+            }
+            draw_status_bar(&app, &app.vk);
+
+            if (app.goto_open)
+                draw_goto_bar(&app, &app.vk);
+            if (app.find_open)
+                draw_find_bar(&app, &app.vk);
+            if (app.picker_open)
+                draw_picker(&app, &app.vk);
+            if (app.theme_picker_open)
+                draw_theme_picker(&app, &app.vk);
+            if (app.palette_open)
+                draw_palette(&app, &app.vk);
+
+            lsp_draw_ui(&app, &app.vk);
         }
-        if (app.terminal_open) {
-            terminal_draw(&app.terminal, &app.vk, &app.draw, &app.font,
-                          PROJECT_SIDEBAR_WIDTH, tab_h + editor_h, editor_w, term_h);
-        }
-        draw_status_bar(&app, &app.vk);
-
-        if (app.goto_open)
-            draw_goto_bar(&app, &app.vk);
-        if (app.find_open)
-            draw_find_bar(&app, &app.vk);
-        if (app.picker_open)
-            draw_picker(&app, &app.vk);
-        if (app.theme_picker_open)
-            draw_theme_picker(&app, &app.vk);
-        if (app.palette_open)
-            draw_palette(&app, &app.vk);
-
-        lsp_draw_ui(&app, &app.vk);
 
         if (!vk_context_end_frame(&app.vk))
             app.framebuffer_resized = true;

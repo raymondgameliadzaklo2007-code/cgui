@@ -907,6 +907,10 @@ bool lua_bridge_execute_command_id(App *app, const char *id)
         if (app) terminal_toggle(app);
         return true;
     }
+    if (strcmp(id, "project:new") == 0 || strcmp(id, "welcome:open") == 0) {
+        if (app) welcome_open(app);
+        return true;
+    }
     if (strcmp(id, "project:run") == 0 || strcmp(id, "project:run_active") == 0) {
         if (app) project_config_run_active(app);
         return true;

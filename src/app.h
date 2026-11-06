@@ -24,6 +24,7 @@
 #include "lsp.h"
 #include "terminal.h"
 #include "project.h"
+#include "welcome.h"
 
 #define MAX_TABS 16
 #define PROJECT_PATH_MAX 1024
@@ -152,6 +153,10 @@ typedef struct App {
     char   available_themes[128][64];
     int    available_theme_count;
     char   theme_picker_orig[64];
+
+    /* Welcome & Project Generator Screen */
+    bool         welcome_open;
+    WelcomeState welcome;
 
     /* Language Server Protocol (LSP) */
     LspClient lsp;

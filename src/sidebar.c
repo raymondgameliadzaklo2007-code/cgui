@@ -542,7 +542,7 @@ bool project_handle_click(App *app, float x, float y, float tab_h,
 
     float button_x = PROJECT_SIDEBAR_WIDTH - 34.0f;
     if (y >= tab_h + 3.0f && y < tab_h + 25.0f && x >= button_x) {
-        project_show_folder_dialog(app);
+        welcome_open(app);
         return true;
     }
 

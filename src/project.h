@@ -75,11 +75,28 @@ const char *project_config_active_summary(const ProjectConfig *cfg, char *buf, s
 typedef enum ProjectTemplate {
     PROJECT_TEMPLATE_C_MESON = 0,
     PROJECT_TEMPLATE_C_MAKE,
+    PROJECT_TEMPLATE_C_CMAKE,
     PROJECT_TEMPLATE_RUST_CARGO,
+    PROJECT_TEMPLATE_GO,
     PROJECT_TEMPLATE_PYTHON,
+    PROJECT_TEMPLATE_ZIG,
+    PROJECT_TEMPLATE_CUSTOM,
     PROJECT_TEMPLATE_COUNT
 } ProjectTemplate;
 
+typedef struct ProjectTemplateInfo {
+    ProjectTemplate tmpl;
+    const char *name;          /* e.g. "C / C++ (Meson)" */
+    const char *tag;           /* e.g. "Meson" */
+    const char *toolchain;     /* e.g. "Meson + Ninja" */
+    const char *standard;      /* e.g. "C23" */
+    const char *desc;          /* e.g. "Fast modern C23 build system with automatic run targets" */
+    const char *entry_file;    /* e.g. "src/main.c" */
+    const char *default_name;  /* e.g. "my_c_app" */
+} ProjectTemplateInfo;
+
+const ProjectTemplateInfo *project_template_get_info(ProjectTemplate tmpl);
+const char *project_template_entry_file(ProjectTemplate tmpl);
 bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *proj_name);
 
 #endif /* CGUI_PROJECT_H */

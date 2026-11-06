@@ -96,6 +96,7 @@ sources = files(
   'src/lsp.c',
   'src/terminal.c',
   'src/project.c',
+  'src/welcome.c',
 )
 
 executable(

@@ -327,15 +327,112 @@ const char *project_config_active_summary(const ProjectConfig *cfg, char *buf, s
     return buf;
 }
 
+static const ProjectTemplateInfo g_templates[PROJECT_TEMPLATE_COUNT] = {
+    [PROJECT_TEMPLATE_C_MESON] = {
+        .tmpl = PROJECT_TEMPLATE_C_MESON,
+        .name = "C / C++ (Meson)",
+        .tag = "Meson",
+        .toolchain = "Meson + Ninja",
+        .standard = "C23",
+        .desc = "Modern high-performance build system with instant compile times and ninja generation.",
+        .entry_file = "src/main.c",
+        .default_name = "meson_app",
+    },
+    [PROJECT_TEMPLATE_C_MAKE] = {
+        .tmpl = PROJECT_TEMPLATE_C_MAKE,
+        .name = "C / C++ (Makefile)",
+        .tag = "Make",
+        .toolchain = "GCC / Clang + GNU Make",
+        .standard = "C23 / POSIX",
+        .desc = "Classic Makefile with all, run, clean, and test rules.",
+        .entry_file = "main.c",
+        .default_name = "make_app",
+    },
+    [PROJECT_TEMPLATE_C_CMAKE] = {
+        .tmpl = PROJECT_TEMPLATE_C_CMAKE,
+        .name = "C / C++ (CMake)",
+        .tag = "CMake",
+        .toolchain = "CMake 3.20+ (Ninja / Make)",
+        .standard = "C23",
+        .desc = "Industry standard cross-platform build automation.",
+        .entry_file = "src/main.c",
+        .default_name = "cmake_app",
+    },
+    [PROJECT_TEMPLATE_RUST_CARGO] = {
+        .tmpl = PROJECT_TEMPLATE_RUST_CARGO,
+        .name = "Rust (Cargo)",
+        .tag = "Cargo",
+        .toolchain = "Rustc + Cargo",
+        .standard = "Rust 2021/2024",
+        .desc = "Safe, concurrent systems language with cargo run, build, and test.",
+        .entry_file = "src/main.rs",
+        .default_name = "rust_app",
+    },
+    [PROJECT_TEMPLATE_GO] = {
+        .tmpl = PROJECT_TEMPLATE_GO,
+        .name = "Go Module",
+        .tag = "Go",
+        .toolchain = "Go Toolchain",
+        .standard = "Go 1.22+",
+        .desc = "Simplicity and concurrency with standard go.mod and main package.",
+        .entry_file = "main.go",
+        .default_name = "go_app",
+    },
+    [PROJECT_TEMPLATE_PYTHON] = {
+        .tmpl = PROJECT_TEMPLATE_PYTHON,
+        .name = "Python Application",
+        .tag = "Python",
+        .toolchain = "Python 3 + pytest",
+        .standard = "Python 3.10+",
+        .desc = "Clean Python project with entry point script and dependencies manifest.",
+        .entry_file = "main.py",
+        .default_name = "py_app",
+    },
+    [PROJECT_TEMPLATE_ZIG] = {
+        .tmpl = PROJECT_TEMPLATE_ZIG,
+        .name = "Zig Application",
+        .tag = "Zig",
+        .toolchain = "Zig Compiler",
+        .standard = "Zig 0.13+",
+        .desc = "Robust, modern systems programming with build.zig.",
+        .entry_file = "src/main.zig",
+        .default_name = "zig_app",
+    },
+    [PROJECT_TEMPLATE_CUSTOM] = {
+        .tmpl = PROJECT_TEMPLATE_CUSTOM,
+        .name = "Custom / Empty Workspace",
+        .tag = "Custom",
+        .toolchain = "User Defined",
+        .standard = "Custom",
+        .desc = "Empty workspace scaffolded with .cgui/project.json configuration.",
+        .entry_file = "README.md",
+        .default_name = "workspace",
+    },
+};
+
+const ProjectTemplateInfo *project_template_get_info(ProjectTemplate tmpl)
+{
+    if (tmpl < 0 || tmpl >= PROJECT_TEMPLATE_COUNT)
+        return &g_templates[0];
+    return &g_templates[tmpl];
+}
+
+const char *project_template_entry_file(ProjectTemplate tmpl)
+{
+    const ProjectTemplateInfo *info = project_template_get_info(tmpl);
+    return info->entry_file ? info->entry_file : "src/main.c";
+}
+
 bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *proj_name)
 {
     if (!dest_dir || !dest_dir[0]) return false;
     const char *name = (proj_name && proj_name[0]) ? proj_name : "myapp";
 
+    (void)mkdir(dest_dir, 0755);
+
     char path[1024];
 
     if (tmpl == PROJECT_TEMPLATE_C_MESON) {
-        /* meson.build */
         snprintf(path, sizeof(path), "%s/meson.build", dest_dir);
         FILE *f = fopen(path, "w");
         if (f) {
@@ -345,7 +442,6 @@ bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *pr
             fclose(f);
         }
 
-        /* src/main.c */
         snprintf(path, sizeof(path), "%s/src", dest_dir);
         (void)mkdir(path, 0755);
         snprintf(path, sizeof(path), "%s/src/main.c", dest_dir);
@@ -372,6 +468,59 @@ bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *pr
         }
         return true;
     }
+    else if (tmpl == PROJECT_TEMPLATE_C_CMAKE) {
+        snprintf(path, sizeof(path), "%s/CMakeLists.txt", dest_dir);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "cmake_minimum_required(VERSION 3.20)\n"
+                       "project(%s C)\n\n"
+                       "set(CMAKE_C_STANDARD 23)\n"
+                       "set(CMAKE_C_STANDARD_REQUIRED ON)\n\n"
+                       "add_executable(%s src/main.c)\n", name, name);
+            fclose(f);
+        }
+        snprintf(path, sizeof(path), "%s/src", dest_dir);
+        (void)mkdir(path, 0755);
+        snprintf(path, sizeof(path), "%s/src/main.c", dest_dir);
+        f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello from %s (CMake)!\\n\");\n    return 0;\n}\n", name);
+            fclose(f);
+        }
+        return true;
+    }
+    else if (tmpl == PROJECT_TEMPLATE_RUST_CARGO) {
+        snprintf(path, sizeof(path), "%s/Cargo.toml", dest_dir);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "[package]\nname = \"%s\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n", name);
+            fclose(f);
+        }
+        snprintf(path, sizeof(path), "%s/src", dest_dir);
+        (void)mkdir(path, 0755);
+        snprintf(path, sizeof(path), "%s/src/main.rs", dest_dir);
+        f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "fn main() {\n    println!(\"Hello from %s (Rust)!\");\n}\n", name);
+            fclose(f);
+        }
+        return true;
+    }
+    else if (tmpl == PROJECT_TEMPLATE_GO) {
+        snprintf(path, sizeof(path), "%s/go.mod", dest_dir);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "module %s\n\ngo 1.22\n", name);
+            fclose(f);
+        }
+        snprintf(path, sizeof(path), "%s/main.go", dest_dir);
+        f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "package main\n\nimport \"fmt\"\n\nfunc main() {\n    fmt.Println(\"Hello from %s (Go)!\")\n}\n", name);
+            fclose(f);
+        }
+        return true;
+    }
     else if (tmpl == PROJECT_TEMPLATE_PYTHON) {
         snprintf(path, sizeof(path), "%s/main.py", dest_dir);
         FILE *f = fopen(path, "w");
@@ -383,6 +532,60 @@ bool project_scaffold(const char *dest_dir, ProjectTemplate tmpl, const char *pr
         f = fopen(path, "w");
         if (f) {
             fprintf(f, "# Project dependencies\n");
+            fclose(f);
+        }
+        return true;
+    }
+    else if (tmpl == PROJECT_TEMPLATE_ZIG) {
+        snprintf(path, sizeof(path), "%s/build.zig", dest_dir);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "const std = @import(\"std\");\n\n"
+                       "pub fn build(b: *std.Build) void {\n"
+                       "    const target = b.standardTargetOptions(.{});\n"
+                       "    const optimize = b.standardOptimizeOption(.{});\n"
+                       "    const exe = b.addExecutable(.{\n"
+                       "        .name = \"%s\",\n"
+                       "        .root_source_file = b.path(\"src/main.zig\"),\n"
+                       "        .target = target,\n"
+                       "        .optimize = optimize,\n"
+                       "    });\n"
+                       "    b.installArtifact(exe);\n"
+                       "    const run_cmd = b.addRunArtifact(exe);\n"
+                       "    const run_step = b.step(\"run\", \"Run the app\");\n"
+                       "    run_step.dependOn(&run_cmd.step);\n"
+                       "}\n", name);
+            fclose(f);
+        }
+        snprintf(path, sizeof(path), "%s/src", dest_dir);
+        (void)mkdir(path, 0755);
+        snprintf(path, sizeof(path), "%s/src/main.zig", dest_dir);
+        f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "const std = @import(\"std\");\n\n"
+                       "pub fn main() !void {\n"
+                       "    std.debug.print(\"Hello from {s} (Zig)!\\n\", .{\"%s\"});\n"
+                       "}\n", name);
+            fclose(f);
+        }
+        return true;
+    }
+    else if (tmpl == PROJECT_TEMPLATE_CUSTOM) {
+        snprintf(path, sizeof(path), "%s/README.md", dest_dir);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "# %s\n\nWelcome to your new project in cgui.\n", name);
+            fclose(f);
+        }
+        snprintf(path, sizeof(path), "%s/.cgui", dest_dir);
+        (void)mkdir(path, 0755);
+        snprintf(path, sizeof(path), "%s/.cgui/project.json", dest_dir);
+        f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "{\n  \"name\": \"%s\",\n  \"type\": \"Workspace\",\n  \"targets\": [\n"
+                       "    { \"name\": \"Build\", \"cmd\": \"echo 'Building %s...'\" },\n"
+                       "    { \"name\": \"Run\", \"cmd\": \"echo 'Running %s...'\" }\n"
+                       "  ]\n}\n", name, name, name);
             fclose(f);
         }
         return true;

@@ -120,6 +120,9 @@ endif()
 find_package(msdfgen QUIET CONFIG)
 if (TARGET msdfgen::msdfgen)
     set(MSDFGEN_TARGET msdfgen::msdfgen)
+    if (TARGET msdfgen::msdfgen-ext)
+        list(APPEND MSDFGEN_TARGET msdfgen::msdfgen-ext)
+    endif()
     message(STATUS "Using system msdfgen")
 else()
     message(STATUS "msdfgen not found on host. Fetching msdfgen via FetchContent...")
@@ -136,11 +139,22 @@ else()
     FetchContent_MakeAvailable(msdfgen)
     if (TARGET msdfgen::msdfgen)
         set(MSDFGEN_TARGET msdfgen::msdfgen)
+        if (TARGET msdfgen::msdfgen-ext)
+            list(APPEND MSDFGEN_TARGET msdfgen::msdfgen-ext)
+        endif()
     elseif (TARGET msdfgen)
         set(MSDFGEN_TARGET msdfgen)
     elseif (TARGET msdfgen-core)
         set(MSDFGEN_TARGET msdfgen-core)
+        if (TARGET msdfgen-ext)
+            list(APPEND MSDFGEN_TARGET msdfgen-ext)
+        endif()
     endif()
+endif()
+
+find_package(Freetype QUIET)
+if (TARGET Freetype::Freetype)
+    list(APPEND MSDFGEN_TARGET Freetype::Freetype)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -167,7 +181,13 @@ target_link_libraries(cgui PRIVATE
     Vulkan::Vulkan
 )
 
-# Automatically copy assets directory to build directory
+# Automatically copy assets directory to build directory on every build
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+    add_custom_target(copy_assets ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets
+            ${CMAKE_CURRENT_BINARY_DIR}/assets
+        COMMENT "Syncing assets to build directory"
+    )
+    add_dependencies(cgui copy_assets)
 endif()

@@ -257,10 +257,23 @@ void Vulkan2DRenderer::collect_instances(const std::shared_ptr<ui::Element>& el,
         const auto& col = style.text_color.value();
         float font_size = style.font_size > 0.0f ? style.font_size : 14.0f;
 
+        float pad_l = YGNodeLayoutGetPadding(el->yoga_node(), YGEdgeLeft);
+        float pad_r = YGNodeLayoutGetPadding(el->yoga_node(), YGEdgeRight);
+        float inner_w = std::max(0.0f, bounds.width - pad_l - pad_r);
+
+        float total_text_w = font_atlas_->measure_text_width(style.text, font_size);
+        float cur_x = abs_x + pad_l;
+
+        YGJustify justify = YGNodeStyleGetJustifyContent(el->yoga_node());
+        if (justify == YGJustifyCenter && inner_w > total_text_w) {
+            cur_x += (inner_w - total_text_w) * 0.5f;
+        } else if (justify == YGJustifyFlexEnd && inner_w > total_text_w) {
+            cur_x += (inner_w - total_text_w);
+        }
+
         // Vertically center text in element height, baseline aligned
         float text_h = font_atlas_->line_height() * font_size;
         float base_y = abs_y + (bounds.height > 0.0f ? (bounds.height - text_h) * 0.5f : 0.0f) + (font_atlas_->ascender() * font_size);
-        float cur_x = abs_x;
 
         for (char ch : style.text) {
             if (ch == '\n') continue;

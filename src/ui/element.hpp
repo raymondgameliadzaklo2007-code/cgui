@@ -136,9 +136,13 @@ public:
     void calculate_layout(float available_width, float available_height);
 
 private:
+    void update_text_layout();
+
     YGNodeRef yoga_node_{nullptr};
     Style style_{};
     std::vector<std::shared_ptr<Element>> children_;
+    bool explicit_width_{false};
+    bool explicit_height_{false};
     bool is_hovered_{false};
     bool is_active_{false};
     ClickCallback on_click_;

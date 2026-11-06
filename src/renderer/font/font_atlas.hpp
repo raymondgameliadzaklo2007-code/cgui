@@ -30,6 +30,7 @@ struct Glyph {
 class FontAtlas {
 public:
     FontAtlas();
+    explicit FontAtlas(const std::string& font_path);
     ~FontAtlas() = default;
 
     FontAtlas(const FontAtlas&) = delete;
@@ -51,14 +52,15 @@ public:
     [[nodiscard]] const std::vector<uint8_t>& pixel_data() const noexcept { return pixels_; }
 
 private:
-    void generate_default_atlas();
+    bool build_with_msdfgen(const std::string& font_path);
+    void load_default_atlas();
 
     uint32_t width_{512};
     uint32_t height_{512};
     float px_range_{4.0f};
     float line_height_{1.25f};
-    float ascender_{0.80f};
-    float descender_{-0.20f};
+    float ascender_{0.928f};
+    float descender_{-0.236f};
 
     std::unordered_map<uint32_t, Glyph> glyphs_;
     std::vector<uint8_t> pixels_; // RGBA8 MSDF texture data

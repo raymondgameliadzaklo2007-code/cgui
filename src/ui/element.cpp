@@ -14,21 +14,25 @@ Element::~Element() {
 }
 
 Element& Element::width(float px) {
+    explicit_width_ = true;
     YGNodeStyleSetWidth(yoga_node_, px);
     return *this;
 }
 
 Element& Element::height(float px) {
+    explicit_height_ = true;
     YGNodeStyleSetHeight(yoga_node_, px);
     return *this;
 }
 
 Element& Element::width_percent(float percent) {
+    explicit_width_ = true;
     YGNodeStyleSetWidthPercent(yoga_node_, percent);
     return *this;
 }
 
 Element& Element::height_percent(float percent) {
+    explicit_height_ = true;
     YGNodeStyleSetHeightPercent(yoga_node_, percent);
     return *this;
 }
@@ -70,36 +74,43 @@ Element& Element::align_items(YGAlign align) {
 
 Element& Element::padding(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeAll, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_horizontal(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeHorizontal, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_vertical(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeVertical, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_left(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeLeft, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_right(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeRight, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_top(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeTop, px);
+    update_text_layout();
     return *this;
 }
 
 Element& Element::padding_bottom(float px) {
     YGNodeStyleSetPadding(yoga_node_, YGEdgeBottom, px);
+    update_text_layout();
     return *this;
 }
 
@@ -173,26 +184,49 @@ Element& Element::radius(float r) {
 Element& Element::text(std::string text, const Color& color) {
     style_.text = std::move(text);
     style_.text_color = color;
-    // Provide natural flexbox bounds if not explicitly overridden
-    if (YGNodeStyleGetWidth(yoga_node_).unit == YGUnitUndefined) {
-        float estimated_w = static_cast<float>(style_.text.length()) * (style_.font_size * 0.55f);
-        YGNodeStyleSetWidth(yoga_node_, estimated_w);
-    }
-    if (YGNodeStyleGetHeight(yoga_node_).unit == YGUnitUndefined) {
-        float estimated_h = style_.font_size * 1.30f;
-        YGNodeStyleSetHeight(yoga_node_, estimated_h);
-    }
+    update_text_layout();
     return *this;
 }
 
 Element& Element::font_size(float size) {
     style_.font_size = size;
+    update_text_layout();
     return *this;
 }
 
 Element& Element::text_color(const Color& color) {
     style_.text_color = color;
     return *this;
+}
+
+void Element::update_text_layout() {
+    if (style_.text.empty()) return;
+
+    float fsize = style_.font_size > 0.0f ? style_.font_size : 14.0f;
+
+    if (!explicit_width_) {
+        // Measure horizontal span: average glyph width is ~0.62em plus extra safety padding
+        float est_w = static_cast<float>(style_.text.length()) * (fsize * 0.65f);
+
+        YGValue pad_l = YGNodeStyleGetPadding(yoga_node_, YGEdgeLeft);
+        YGValue pad_r = YGNodeStyleGetPadding(yoga_node_, YGEdgeRight);
+        if (pad_l.unit == YGUnitPoint) est_w += pad_l.value;
+        if (pad_r.unit == YGUnitPoint) est_w += pad_r.value;
+
+        YGNodeStyleSetWidth(yoga_node_, est_w);
+    }
+
+    if (!explicit_height_) {
+        // Standard typography line-height is 1.35x font size
+        float est_h = fsize * 1.35f;
+
+        YGValue pad_t = YGNodeStyleGetPadding(yoga_node_, YGEdgeTop);
+        YGValue pad_b = YGNodeStyleGetPadding(yoga_node_, YGEdgeBottom);
+        if (pad_t.unit == YGUnitPoint) est_h += pad_t.value;
+        if (pad_b.unit == YGUnitPoint) est_h += pad_b.value;
+
+        YGNodeStyleSetHeight(yoga_node_, est_h);
+    }
 }
 
 std::shared_ptr<Element> Element::add_child(std::shared_ptr<Element> child) {

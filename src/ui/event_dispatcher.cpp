@@ -77,10 +77,12 @@ void EventDispatcher::on_mouse_button(MouseButton button, bool is_down, float x,
     hit_test_all(root_, 0.0f, 0.0f, x, y, hits);
 
     if (button == MouseButton::Left && is_down) {
-        // Dispatch click to the deepest hit element with a click listener
+        // Dispatch click to the deepest hit element with a registered click listener
         for (auto it = hits.rbegin(); it != hits.rend(); ++it) {
-            it->element->trigger_click();
-            break;
+            if (it->element->has_click_listener()) {
+                it->element->trigger_click();
+                break;
+            }
         }
     }
 }

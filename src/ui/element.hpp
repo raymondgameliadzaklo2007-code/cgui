@@ -40,6 +40,7 @@ struct Bounds {
 struct Style {
     std::optional<Color> background;
     std::optional<Color> hover_background;
+    std::optional<Color> active_background;
     std::optional<Color> border_color;
     float border_width{0.0f};
     float corner_radius{0.0f};
@@ -77,11 +78,23 @@ public:
     Element& padding(float px);
     Element& padding_horizontal(float px);
     Element& padding_vertical(float px);
+    Element& padding_left(float px);
+    Element& padding_right(float px);
+    Element& padding_top(float px);
+    Element& padding_bottom(float px);
+    Element& margin(float px);
+    Element& margin_horizontal(float px);
+    Element& margin_vertical(float px);
+    Element& margin_left(float px);
+    Element& margin_right(float px);
+    Element& margin_top(float px);
+    Element& margin_bottom(float px);
     Element& gap(float px);
 
     // Fluent styling
     Element& bg(const Color& color);
     Element& hover_bg(const Color& color);
+    Element& active_bg(const Color& color);
     Element& border(float width, const Color& color);
     Element& radius(float r);
     Element& text(std::string text, const Color& color = Color::rgb(220, 224, 230));
@@ -93,6 +106,7 @@ public:
     Element& on_click(ClickCallback callback) { on_click_ = std::move(callback); return *this; }
     Element& on_hover(HoverCallback callback) { on_hover_ = std::move(callback); return *this; }
 
+    [[nodiscard]] bool has_click_listener() const noexcept { return static_cast<bool>(on_click_); }
     [[nodiscard]] bool is_hovered() const noexcept { return is_hovered_; }
     void set_hovered(bool hovered) {
         if (is_hovered_ != hovered) {
@@ -100,12 +114,17 @@ public:
             if (on_hover_) on_hover_(is_hovered_);
         }
     }
+
+    [[nodiscard]] bool is_active() const noexcept { return is_active_; }
+    Element& set_active(bool active) { is_active_ = active; return *this; }
+
     void trigger_click() {
         if (on_click_) on_click_();
     }
 
     // Hierarchy
     std::shared_ptr<Element> add_child(std::shared_ptr<Element> child);
+    void clear_children();
 
     [[nodiscard]] const std::vector<std::shared_ptr<Element>>& children() const noexcept { return children_; }
     [[nodiscard]] const Style& style() const noexcept { return style_; }
@@ -119,6 +138,7 @@ private:
     Style style_{};
     std::vector<std::shared_ptr<Element>> children_;
     bool is_hovered_{false};
+    bool is_active_{false};
     ClickCallback on_click_;
     HoverCallback on_hover_;
 };

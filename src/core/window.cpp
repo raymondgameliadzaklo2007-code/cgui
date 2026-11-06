@@ -24,6 +24,8 @@ Window::Window(const WindowConfig& config) {
     glfwSetFramebufferSizeCallback(window_, framebuffer_size_callback);
     glfwSetCursorPosCallback(window_, cursor_pos_callback);
     glfwSetMouseButtonCallback(window_, mouse_button_callback);
+    glfwSetScrollCallback(window_, scroll_callback);
+    glfwSetKeyCallback(window_, key_callback);
 }
 
 Window::~Window() {
@@ -107,6 +109,20 @@ void Window::mouse_button_callback(GLFWwindow* window, int button, int action, i
     auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
     if (self && self->on_mouse_button_) {
         self->on_mouse_button_(button, action, mods);
+    }
+}
+
+void Window::scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self && self->on_scroll_) {
+        self->on_scroll_(xoffset, yoffset);
+    }
+}
+
+void Window::key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self && self->on_key_) {
+        self->on_key_(key, scancode, action, mods);
     }
 }
 

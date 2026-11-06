@@ -53,11 +53,6 @@ Element& Element::flex_basis_percent(float percent) {
     return *this;
 }
 
-Element& Element::flex_shrink(float shrink) {
-    YGNodeStyleSetFlexShrink(yoga_node_, shrink);
-    return *this;
-}
-
 Element& Element::flex_direction(YGFlexDirection dir) {
     YGNodeStyleSetFlexDirection(yoga_node_, dir);
     return *this;
@@ -88,6 +83,61 @@ Element& Element::padding_vertical(float px) {
     return *this;
 }
 
+Element& Element::padding_left(float px) {
+    YGNodeStyleSetPadding(yoga_node_, YGEdgeLeft, px);
+    return *this;
+}
+
+Element& Element::padding_right(float px) {
+    YGNodeStyleSetPadding(yoga_node_, YGEdgeRight, px);
+    return *this;
+}
+
+Element& Element::padding_top(float px) {
+    YGNodeStyleSetPadding(yoga_node_, YGEdgeTop, px);
+    return *this;
+}
+
+Element& Element::padding_bottom(float px) {
+    YGNodeStyleSetPadding(yoga_node_, YGEdgeBottom, px);
+    return *this;
+}
+
+Element& Element::margin(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeAll, px);
+    return *this;
+}
+
+Element& Element::margin_horizontal(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeHorizontal, px);
+    return *this;
+}
+
+Element& Element::margin_vertical(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeVertical, px);
+    return *this;
+}
+
+Element& Element::margin_left(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeLeft, px);
+    return *this;
+}
+
+Element& Element::margin_right(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeRight, px);
+    return *this;
+}
+
+Element& Element::margin_top(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeTop, px);
+    return *this;
+}
+
+Element& Element::margin_bottom(float px) {
+    YGNodeStyleSetMargin(yoga_node_, YGEdgeBottom, px);
+    return *this;
+}
+
 Element& Element::gap(float px) {
     YGNodeStyleSetGap(yoga_node_, YGGutterAll, px);
     return *this;
@@ -100,6 +150,11 @@ Element& Element::bg(const Color& color) {
 
 Element& Element::hover_bg(const Color& color) {
     style_.hover_background = color;
+    return *this;
+}
+
+Element& Element::active_bg(const Color& color) {
+    style_.active_background = color;
     return *this;
 }
 
@@ -129,6 +184,13 @@ std::shared_ptr<Element> Element::add_child(std::shared_ptr<Element> child) {
     return child;
 }
 
+void Element::clear_children() {
+    if (yoga_node_) {
+        YGNodeRemoveAllChildren(yoga_node_);
+    }
+    children_.clear();
+}
+
 Bounds Element::computed_bounds() const noexcept {
     return {
         YGNodeLayoutGetLeft(yoga_node_),
@@ -139,6 +201,11 @@ Bounds Element::computed_bounds() const noexcept {
 }
 
 void Element::calculate_layout(float available_width, float available_height) {
+    // Crucial: The root node in Yoga has no parent owner. Percentage styles (e.g. 100%)
+    // cannot resolve without an owner. Setting explicit width and height on the root
+    // ensures the entire flexbox tree resizes dynamically with the window viewport.
+    YGNodeStyleSetWidth(yoga_node_, available_width);
+    YGNodeStyleSetHeight(yoga_node_, available_height);
     YGNodeCalculateLayout(yoga_node_, available_width, available_height, YGDirectionLTR);
 }
 

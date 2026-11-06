@@ -38,20 +38,28 @@ public:
     using ResizeCallback = std::function<void(int width, int height)>;
     using CursorPosCallback = std::function<void(double x, double y)>;
     using MouseButtonCallback = std::function<void(int button, int action, int mods)>;
+    using ScrollCallback = std::function<void(double xoffset, double yoffset)>;
+    using KeyCallback = std::function<void(int key, int scancode, int action, int mods)>;
 
     void on_resize(ResizeCallback callback) { on_resize_ = std::move(callback); }
     void on_mouse_move(CursorPosCallback callback) { on_mouse_move_ = std::move(callback); }
     void on_mouse_button(MouseButtonCallback callback) { on_mouse_button_ = std::move(callback); }
+    void on_scroll(ScrollCallback callback) { on_scroll_ = std::move(callback); }
+    void on_key(KeyCallback callback) { on_key_ = std::move(callback); }
 
 private:
     static void framebuffer_size_callback(GLFWwindow* window, int width, int height);
     static void cursor_pos_callback(GLFWwindow* window, double xpos, double ypos);
     static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
+    static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+    static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
     GLFWwindow* window_{nullptr};
     ResizeCallback on_resize_;
     CursorPosCallback on_mouse_move_;
     MouseButtonCallback on_mouse_button_;
+    ScrollCallback on_scroll_;
+    KeyCallback on_key_;
     static inline int window_count_{0};
 };
 
